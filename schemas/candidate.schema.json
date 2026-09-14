@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KDA Candidate Record",
+  "description": "One line of <task-workspace>/runs/candidates.jsonl. Every attempt is recorded, including rejected and regressed ones, so that a later reader can answer 'why is this version the best one?'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "hypothesis", "correctness", "decision"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable candidate identifier, for example \"c003\"."
+    },
+    "parent": {
+      "type": ["string", "null"],
+      "description": "Identifier of the candidate this one was derived from. Null when it derives directly from the baseline."
+    },
+    "hypothesis": {
+      "type": "string",
+      "description": "The single coherent change this candidate tests."
+    },
+    "changes": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Concrete edits, for example \"BLOCK_N 64 -> 128\"."
+    },
+    "correctness": {
+      "enum": ["pass", "fail", "not_run"]
+    },
+    "latency_us": {
+      "type": ["number", "null"],
+      "description": "Measured value of the target metric for this candidate."
+    },
+    "baseline_us": {
+      "type": ["number", "null"],
+      "description": "Measured baseline value the candidate is compared against."
+    },
+    "speedup": {
+      "type": ["number", "null"],
+      "description": "baseline_us / latency_us."
+    },
+    "profile_evidence": {
+      "type": ["string", "null"],
+      "description": "Path under profile/ or an artifact identifier that justifies this change. Required before a final promotion that relies on a bottleneck claim."
+    },
+    "decision": {
+      "enum": ["keep", "revise", "reject"]
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "description": "Why it was rejected or revised. Required when decision is not \"keep\"."
+    },
+    "recorded_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"decision": {"enum": ["reject", "revise"]}},
+        "required": ["decision"]
+      },
+      "then": {"required": ["reason"]}
+    }
+  ]
+}

@@ -1,0 +1,259 @@
+# KDA Task Contract, version 1.
+#
+# Machine-readable form of the contract defined in docs/agent-flow.md.
+# A task workspace stores exactly one instance at .kernelpilot/task.yaml.
+#
+# This schema describes WHAT the task is. It must not describe HOW to optimize:
+# tiling, data layout, warp stalls, profiler interpretation, and DSL-specific
+# advice belong in a Skill, not in the task contract.
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: KDA Task Contract
+version: 1
+type: object
+additionalProperties: false
+required:
+  - version
+  - task
+  - target
+  - implementation
+  - correctness
+  - benchmark
+  - goal
+properties:
+
+  version:
+    type: integer
+    const: 1
+
+  task:
+    type: object
+    additionalProperties: false
+    required: [name, description]
+    properties:
+      name:
+        type: string
+        description: Short identifier, for example "flash-kda".
+      description:
+        type: string
+        description: One-line statement of the goal.
+
+  target:
+    type: object
+    additionalProperties: false
+    required: [backend, device]
+    properties:
+      backend:
+        type: string
+        description: Execution backend, for example "cuda", "gcu", "ascend", "kunlun".
+      device:
+        type: string
+        description: Device name, for example "H100", "B200".
+      arch:
+        type: string
+        description: Architecture, for example "sm90", "sm100".
+      profile:
+        type: string
+        pattern: "^[a-z0-9][a-z0-9-]*$"
+        description: Backend profile id under backends/, for example "cuda-sm90".
+      language:
+        type: string
+        description: Kernel language or DSL, for example "triton", "cuda", or "tilelang".
+
+  execution:
+    type: object
+    additionalProperties: false
+    description: Where contracted commands run. Codex always stays on the controller.
+    required: [transport]
+    properties:
+      transport:
+        type: string
+        enum: [local, ssh]
+        default: local
+      host:
+        type: string
+        pattern: "^[A-Za-z0-9_.@-]+$"
+        description: SSH host or configured alias. Required when transport is ssh.
+      workspace:
+        type: string
+        pattern: "^/"
+        description: Absolute remote repository path. Required when transport is ssh.
+
+  environment:
+    type: object
+    additionalProperties: false
+    description: Reproducible shell setup and an optional cheap environment check.
+    properties:
+      shell:
+        type: string
+        default: bash
+        description: Shell used with `-lc` for all contracted commands.
+      setup:
+        type: string
+        description: >
+          Shell snippet run before correctness, benchmark, profile, and
+          preflight commands. Use this for conda activation and required
+          environment variables; an interpreter path alone may not reproduce
+          dynamic-library settings.
+      preflight:
+        type: object
+        additionalProperties: false
+        required: [command]
+        properties:
+          command:
+            type: string
+            description: Cheap command that confirms the expected runtime and device.
+          expect_stdout_contains:
+            type: string
+            description: Text that must appear in preflight stdout.
+
+  implementation:
+    type: object
+    additionalProperties: false
+    required: [path]
+    properties:
+      path:
+        type: string
+        description: Repository-relative path of the file the agent may modify.
+      entrypoint:
+        type: string
+        description: Symbol or module the implementation is entered through.
+
+  reference:
+    type: object
+    additionalProperties: false
+    properties:
+      path:
+        type: string
+        description: Repository-relative path of the reference implementation. Never modified.
+
+  correctness:
+    type: object
+    additionalProperties: false
+    required: [command]
+    properties:
+      command:
+        type: string
+        description: Command that proves correctness.
+      required:
+        type: boolean
+        default: true
+        description: When true, a candidate that does not pass must be rejected.
+
+  benchmark:
+    type: object
+    additionalProperties: false
+    required: [command]
+    properties:
+      command:
+        type: string
+        description: Command that measures the target metric.
+      warmup:
+        type: integer
+        minimum: 0
+        description: Warmup iterations, when the harness takes them as arguments.
+      repeat:
+        type: integer
+        minimum: 1
+        description: Measured repetitions, when the harness takes them as arguments.
+      shapes:
+        type: array
+        items:
+          type: string
+        description: Shapes that must be covered by the measurement.
+
+  baseline:
+    type: object
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+        description: Name of the baseline provider.
+      command:
+        type: string
+        description: Command that measures the baseline. Must be reproducible.
+
+  profile:
+    type: object
+    additionalProperties: false
+    properties:
+      tool:
+        type: string
+        description: Profiler, for example "ncu", "nsys", "msprof".
+      command:
+        type: string
+        description: Explicit profiling command. When absent, profiling is at the agent's discretion.
+
+  goal:
+    type: object
+    additionalProperties: false
+    required: [metric]
+    properties:
+      metric:
+        type: string
+        description: Measured quantity, for example "latency".
+      direction:
+        type: string
+        enum: [minimize, maximize]
+        default: minimize
+        description: Whether a smaller or larger metric value is better.
+      aggregation:
+        type: string
+        enum: [sum_ratio, mean_ratio, geomean_ratio, all]
+        default: sum_ratio
+        description: >
+          How required shapes are combined for promotion. `all` requires every
+          shape to satisfy the relative target.
+      max_regression:
+        type: number
+        minimum: 0
+        description: Maximum tolerated relative regression on any required shape.
+      relative_to_baseline:
+        type: number
+        exclusiveMinimum: 0
+        description: Ratio of the goal to the baseline. 1.0 means "no change", 0.95 means "5% better than baseline".
+      target_value:
+        type: number
+        description: Absolute target, used instead of relative_to_baseline when the target is a fixed number.
+
+  constraints:
+    type: object
+    additionalProperties: false
+    properties:
+      preserve_api:
+        type: boolean
+        default: true
+      preserve_correctness:
+        type: boolean
+        default: true
+      allowed_paths:
+        type: array
+        items:
+          type: string
+        description: Implementation sources the agent may modify. Evidence files under docs/, runs/, outputs/, and profile/ are always permitted.
+      forbidden_paths:
+        type: array
+        items:
+          type: string
+        description: Paths the agent must not modify, typically the reference and the test and benchmark scripts.
+
+  stop:
+    type: object
+    additionalProperties: false
+    properties:
+      max_candidates:
+        type: integer
+        minimum: 1
+        description: Hard limit on implemented candidates.
+      max_profile_runs:
+        type: integer
+        minimum: 0
+        description: Hard limit on profiling runs, because profiling is expensive.
+      no_improvement_rounds:
+        type: integer
+        minimum: 1
+        description: After this many candidates without beating the best, re-diagnose the bottleneck before continuing.
+      target_reached:
+        type: boolean
+        default: true
+        description: When true, reaching the goal ends the task.

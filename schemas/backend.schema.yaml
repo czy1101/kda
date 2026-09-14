@@ -1,0 +1,45 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: KDA Backend Profile
+type: object
+additionalProperties: false
+required: [version, id, match, skills]
+properties:
+  version:
+    type: integer
+    const: 1
+  id:
+    type: string
+    pattern: "^[a-z0-9][a-z0-9-]*$"
+  match:
+    type: object
+    additionalProperties: false
+    required: [backend]
+    properties:
+      backend:
+        type: string
+      arches:
+        type: array
+        items: {type: string}
+      devices:
+        type: array
+        items: {type: string}
+      languages:
+        type: array
+        items: {type: string}
+  skills:
+    type: object
+    additionalProperties: false
+    required: [always]
+    properties:
+      always:
+        type: array
+        items: {type: string}
+      when_profiling:
+        type: array
+        items: {type: string}
+      when_researching:
+        type: array
+        items: {type: string}
+  notes:
+    type: array
+    items: {type: string}

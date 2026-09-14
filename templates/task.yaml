@@ -1,0 +1,94 @@
+# KDA Task Contract, version 1 - fill-in template.
+#
+# Usage:
+#   mkdir -p <task-workspace>/.kernelpilot
+#   cp templates/task.yaml <task-workspace>/.kernelpilot/task.yaml
+#   edit the copy
+#
+# Validate the copy against schemas/task.schema.yaml.
+#
+# This file describes only WHAT the task is. It must not contain HOW to
+# optimize: tiling, memory strategy, warp stalls, profiler interpretation, or
+# DSL-specific advice belong in a Skill.
+
+version: 1
+
+task:
+  name: <short-task-name>          # e.g. flash-kda
+  description: <one-line goal>
+
+target:
+  backend: <cuda|gcu|ascend|kunlun>
+  device: <H100|B200|gcu300|...>
+  arch: <sm90|sm100|...>
+  profile: <backend-profile-id>     # e.g. cuda-sm90
+  language: <triton|cuda|tilelang|...>
+
+# Codex remains on the controller. For a GPU server that cannot run Codex,
+# choose ssh and point at the remote operator repository. Omit this block, or
+# use transport: local, when the operator repository is local.
+execution:
+  transport: ssh
+  host: <ssh-config-host>            # e.g. baai
+  workspace: <absolute-remote-repository-path>
+
+# Every contracted command runs in this shell after `setup`. Do not assume that
+# an environment's Python path reproduces conda's library-path activation.
+environment:
+  shell: bash
+  setup: |
+    source <conda-root>/etc/profile.d/conda.sh
+    conda activate <environment-name>
+  preflight:
+    command: python -c "import torch; print(torch.__version__, torch.cuda.get_device_name())"
+    expect_stdout_contains: <expected-device-name>
+
+implementation:
+  path: <repository-relative path the agent may modify>
+  entrypoint: <symbol or module the implementation is entered through>
+
+reference:
+  path: <repository-relative path of the reference implementation>
+
+correctness:
+  command: <command that proves correctness>
+  required: true
+
+benchmark:
+  command: <command that measures the target metric>
+  warmup: 20
+  repeat: 100
+  shapes:
+    - <shape that must be covered, e.g. 1x8192x128>
+
+baseline:
+  name: <baseline provider name>
+  command: <command that measures the baseline>
+
+# Optional: when the profiler command is omitted, profiling is at the agent's
+# discretion and is only expected when the next step is not already justified.
+profile:
+  tool: <ncu|nsys|msprof|...>
+  command: <explicit profiling command>
+
+goal:
+  metric: <latency|throughput|...>
+  direction: minimize
+  aggregation: sum_ratio
+  relative_to_baseline: 0.90        # 1.0 = equal; 0.90 = 10% lower latency
+  max_regression: 0.02              # no required shape may regress by >2%
+  # target_value: <absolute target, use instead of relative_to_baseline>
+
+constraints:
+  preserve_api: true
+  preserve_correctness: true
+  allowed_paths:
+    - <path the agent may modify>
+  forbidden_paths:
+    - <reference, test, and benchmark paths the agent must not modify>
+
+stop:
+  max_candidates: 20
+  max_profile_runs: 10
+  no_improvement_rounds: 5
+  target_reached: true

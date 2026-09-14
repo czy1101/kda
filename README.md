@@ -9,9 +9,26 @@ This repository documents an early research prototype and remains under active d
 | Path | Purpose |
 |---|---|
 | `docs/agent-flow.md` | Minimal end-to-end KDA workflow. |
+| `AGENTS.md` | Repository-facing agent instructions for Codex. |
+| `CLAUDE.md` | Repository-facing agent instructions for Claude Code. |
 | `prompts/README.md` | How to use prompt templates. |
 | `prompts/basic-flow.md` | Generic starter prompt for a new task. |
-| `CLAUDE.md` | Repository-facing agent instructions. |
+| `prompts/optimize-kernel.md` | Entry point for a full optimization run. |
+| `prompts/analyze-kernel.md` | Understand the operator without editing code. |
+| `prompts/profile-kernel.md` | Produce profiling evidence and one hypothesis. |
+| `prompts/final-review.md` | Summarize the best candidate and the evidence. |
+| `workflows/kernel-optimization.yaml` | Declarative definition of the optimization loop. |
+| `schemas/task.schema.yaml` | Task contract schema. |
+| `schemas/candidate.schema.json` | Candidate ledger record schema. |
+| `schemas/run-result.schema.json` | Structured result returned by automated Codex runs. |
+| `schemas/backend.schema.yaml` | Contract for backend-to-skill routing profiles. |
+| `docs/evidence-format.md` | Canonical benchmark and candidate ledger format. |
+| `docs/backend-extensions.md` | How to add a chip backend without growing prompts. |
+| `backends/` | Backend/architecture matching and stage-specific skill routing. |
+| `templates/task.yaml` | Fill-in task contract. |
+| `templates/operator-workspace/` | Files to drop into an operator repository. |
+| `scripts/kernelpilot.py` | Minimal task validator, environment-aware command runner, and Codex driver. |
+| `scripts/controlled_ssh.py` | Allow-listed, hash-guarded adapter for execution-only GPU hosts. |
 | `CONTRIBUTING.md` | Contribution process and DCO sign-off requirements. |
 | `THIRD_PARTY_NOTICES.md` | Third-party component and license disclosures. |
 | `third_party_licenses/` | Verbatim upstream license files for distributed third-party components. |
@@ -42,6 +59,94 @@ git clone https://github.com/mit-han-lab/ncu-report-skill.git
 Use KernelWiki from this repository's pinned submodule. A direct upstream
 checkout may contain artifact snapshots governed by additional terms that are
 omitted from this distribution.
+
+## Using KDA with Codex
+
+The workflow assets here are agent-agnostic: Markdown prompts, a declarative
+workflow, JSON Schemas, and `SKILL.md` directories. Two naming differences
+matter when the driver is Codex instead of Claude Code.
+
+| Purpose | Claude Code | Codex |
+|---|---|---|
+| Repository instructions | `CLAUDE.md` | `AGENTS.md` |
+| Skills | symlink into `~/.claude/skills/` | symlink into `~/.codex/skills/` |
+| Start a task | paste `prompts/basic-flow.md` | paste `prompts/optimize-kernel.md` |
+
+Install the skills for Codex:
+
+```bash
+mkdir -p ~/.codex/skills
+ln -sfn "$(pwd)/skills/KernelWiki"       ~/.codex/skills/KernelWiki
+ln -sfn "$(pwd)/skills/ncu-report-skill" ~/.codex/skills/ncu-report-skill
+```
+
+Skills are user-level: they become available to every Codex session, not only to
+sessions started in this repository. Verify inside a Codex session with
+`/skills`.
+
+Define the task in the operator repository, not here:
+
+```bash
+mkdir -p <operator-repo>/.kernelpilot
+cp templates/task.yaml <operator-repo>/.kernelpilot/task.yaml
+```
+
+Then start Codex in the operator repository, give it `AGENTS.md` (see
+`templates/operator-workspace/AGENTS.md`), and prompt it with:
+
+```text
+Read AGENTS.md, workflows/kernel-optimization.yaml, and .kernelpilot/task.yaml.
+Optimize the kernel in this workspace until the configured target or a stop
+condition is reached. Follow the correctness, benchmark, profiling, and
+candidate-recording requirements.
+```
+
+The repository now includes a deliberately small execution layer. It validates
+the contract, applies the declared environment setup, launches Codex in
+non-interactive mode, captures JSONL events, checks required evidence, and
+rejects runs that modify explicitly forbidden paths. The agent still owns
+optimization judgment; the runner owns reproducibility and gates.
+
+```bash
+# Validate the task and its environment preflight.
+python3 <kda>/scripts/kernelpilot.py validate --workspace <operator-repo>
+
+# Run a contracted command with the exact environment setup.
+python3 <kda>/scripts/kernelpilot.py run correctness --workspace <operator-repo>
+
+# Inspect the Codex invocation without running it.
+python3 <kda>/scripts/kernelpilot.py optimize --workspace <operator-repo> --dry-run
+
+# Run the optimization loop. Codex authentication must already be configured.
+python3 <kda>/scripts/kernelpilot.py optimize --workspace <operator-repo>
+```
+
+### Local Codex with a remote GPU executor
+
+The remote server does not need Codex. Put the task contract and evidence in a
+small local control workspace, set `execution.transport: ssh`, and declare the
+SSH alias and absolute remote repository path. KernelPilot materializes only
+`constraints.allowed_paths` under `remote-worktree/` and rejects a push when a
+path is not allow-listed or its remote hash changed since pull.
+
+```bash
+python3 <kda>/scripts/kernelpilot.py remote inspect --workspace <control-workspace>
+python3 <kda>/scripts/kernelpilot.py remote pull    --workspace <control-workspace>
+# Codex edits <control-workspace>/remote-worktree/<allowed-path>
+python3 <kda>/scripts/kernelpilot.py remote push    --workspace <control-workspace>
+python3 <kda>/scripts/kernelpilot.py run correctness --workspace <control-workspace>
+python3 <kda>/scripts/kernelpilot.py run benchmark   --workspace <control-workspace>
+```
+
+The adapter is the normal execution boundary, not a substitute for operating
+system isolation: the agent instructions and Codex approval policy must also
+disallow direct `ssh`, `scp`, and `rsync` calls.
+
+`codex exec` is launched with `--sandbox workspace-write`, JSONL event capture,
+and a structured final-output schema. The runner does not bypass the Codex
+sandbox or approval model. See OpenAI's
+[non-interactive mode documentation](https://learn.chatgpt.com/docs/non-interactive-mode)
+for the underlying CLI contract.
 
 ## Submodules
 

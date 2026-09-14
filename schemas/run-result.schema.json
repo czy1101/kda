@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KernelPilot run result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "best_candidate",
+    "target_reached",
+    "correctness",
+    "summary"
+  ],
+  "properties": {
+    "status": {"enum": ["complete", "stopped", "blocked"]},
+    "best_candidate": {"type": ["string", "null"]},
+    "target_reached": {"type": "boolean"},
+    "correctness": {"enum": ["pass", "fail", "not_run"]},
+    "summary": {"type": "string"},
+    "remaining_bottlenecks": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}
+

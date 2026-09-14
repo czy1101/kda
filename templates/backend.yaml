@@ -1,0 +1,18 @@
+version: 1
+id: <backend-arch-id>
+
+match:
+  backend: <cuda|gcu|ascend|kunlun|...>
+  arches: [<architecture-id>]
+  devices: [<device-name>]
+  languages: [<kernel-language>]
+
+skills:
+  always:
+    - skills/<backend-optimization-skill>
+  when_profiling:
+    - skills/<backend-profiler-skill>
+  when_researching: []
+
+notes:
+  - <routing note; do not put task-specific benchmark numbers here>

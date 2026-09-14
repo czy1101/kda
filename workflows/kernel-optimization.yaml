@@ -1,0 +1,127 @@
+# Declarative definition of the KDA kernel optimization loop.
+#
+# This file is read by the agent. KernelPilot automates environment setup,
+# local/SSH dispatch, synchronization, and evidence gates; the agent still owns
+# diagnosis and candidate selection.
+#
+# Principles: ../AGENTS.md
+# Underlying loop: ../docs/agent-flow.md
+# Contract: ../schemas/task.schema.yaml, instantiated at .kernelpilot/task.yaml
+# Candidate record: ../schemas/candidate.schema.json
+
+name: kernel-optimization
+version: 1
+
+inputs:
+  task_contract: .kernelpilot/task.yaml
+
+evidence:
+  draft: docs/draft.md
+  plan: docs/plan.md
+  candidates: runs/candidates.jsonl
+  benchmark: runs/benchmark.csv
+  profile: profile/
+
+stages:
+
+  - id: init
+    action: validate_task
+    next: select_backend
+
+  - id: select_backend
+    action: load_backend_profile_and_stage_skills
+    next: prepare_execution
+
+  - id: prepare_execution
+    action: validate_environment_and_materialize_allowed_source
+    next: inspect
+
+  - id: inspect
+    action: inspect_kernel
+    next: correctness
+
+  - id: correctness
+    action: run_correctness
+    on_pass: baseline
+    on_fail: fix_correctness
+
+  - id: fix_correctness
+    action: repair_kernel
+    next: correctness
+
+  - id: baseline
+    action: run_baseline
+    next: benchmark
+
+  - id: benchmark
+    action: benchmark_candidate
+    next: evaluate
+
+  - id: evaluate
+    action: evaluate_target
+    on_target_reached: promote
+    on_target_not_reached: diagnose
+
+  # Benchmark runs every round; profiling runs only on demand, because it is
+  # expensive. Profile when the next optimization is not already justified by
+  # the evidence at hand.
+  - id: diagnose
+    action: diagnose_bottleneck
+    on_known_cause: optimize
+    on_unknown_cause: profile
+
+  - id: profile
+    action: profile_kernel
+    next: optimize
+
+  - id: optimize
+    action: implement_candidate
+    next: deploy_candidate
+
+  - id: deploy_candidate
+    action: synchronize_allowed_candidate
+    next: correctness_candidate
+
+  - id: correctness_candidate
+    action: run_correctness
+    on_pass: benchmark_candidate
+    on_fail: reject_candidate
+
+  - id: benchmark_candidate
+    action: benchmark_candidate
+    next: compare_candidate
+
+  - id: compare_candidate
+    action: compare_to_best
+    on_improved: keep_candidate
+    on_regressed: reject_candidate
+
+  - id: keep_candidate
+    action: record_candidate
+    next: evaluate
+
+  - id: reject_candidate
+    action: record_candidate
+    next: restore_best
+
+  - id: restore_best
+    action: restore_best_correct_candidate
+    next: check_stop
+
+  # Stop conditions come from the task contract's `stop` block: candidate
+  # budget, profiling budget, and repeated rounds without improvement.
+  - id: check_stop
+    action: evaluate_stop_conditions
+    on_target_reached: promote
+    on_candidate_budget_exhausted: promote
+    on_profile_budget_exhausted: promote
+    on_repeated_no_improvement: diagnose
+    otherwise: diagnose
+
+  - id: promote
+    action: verify_scope_goal_and_evidence
+    next: report
+
+  - id: report
+    action: generate_final_report
+    terminal: true

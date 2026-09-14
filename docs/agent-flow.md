@@ -6,6 +6,12 @@ Kernel Design Agents is a repeatable loop for agent-driven implementation work. 
 
 Keep the reusable workflow separate from the task workspace. This repository explains the flow. The task workspace owns code, tests, datasets, benchmark scripts, private rules, and generated artifacts.
 
+The controller and executor may also be separate. Codex, prompts, workflow
+state, and evidence stay on the controller. A GPU server that cannot run Codex
+is an execution-only host reached through the controlled SSH adapter. The
+adapter runs only task-contracted commands and synchronizes only allow-listed
+implementation files.
+
 MLSys-style benchmark work is one possible application of this loop. The same flow can also be used for compiler passes, runtime kernels, infrastructure changes, or other performance-sensitive tasks.
 
 ## Minimal Loop
@@ -19,6 +25,10 @@ MLSys-style benchmark work is one possible application of this loop. The same fl
 7. Measure the target metric when applicable.
 8. Record evidence and decide whether to keep, revise, or reject the candidate.
 9. Repeat until the promotion criteria are met or the remaining blockers are explicit.
+
+For SSH tasks, materialize allow-listed source into `remote-worktree/` before
+inspection, deploy a candidate through the adapter before correctness, and use
+the recorded remote hash to reject concurrent or out-of-band overwrites.
 
 ## Task Contract
 

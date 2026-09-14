@@ -1,0 +1,20 @@
+version: 1
+id: cuda-sm90
+
+match:
+  backend: cuda
+  arches: [sm90]
+  devices: [H100, H800]
+  languages: [triton, cuda]
+
+skills:
+  always:
+    - skills/triton-cuda-optimization
+  when_profiling:
+    - skills/ncu-report-skill
+  when_researching:
+    - skills/KernelWiki
+
+notes:
+  - Treat the backend profile as routing metadata, not as a benchmark claim.
+  - Load profiling guidance only when the task exposes a profiler command.
