@@ -8,6 +8,7 @@
 # Underlying loop: ../docs/agent-flow.md
 # Contract: ../schemas/task.schema.yaml, instantiated at .kernelpilot/task.yaml
 # Candidate record: ../schemas/candidate.schema.json
+# Tool discovery evidence: ../schemas/analysis-capabilities.schema.json
 
 name: kernel-optimization
 version: 1
@@ -24,6 +25,15 @@ evidence:
   candidates: runs/candidates.jsonl
   benchmark: runs/benchmark.csv
   profile: profile/
+  analysis_strategy: runs/analysis-strategy.json
+  analysis_capabilities: runs/analysis-capabilities.json
+  candidate_profile: profile/candidate/
+  reference_profile: profile/reference/
+  profile_analysis: profile/analysis.md
+  profile_comparison: profile/comparison.md
+  low_level_analysis: profile/low-level-analysis.md
+  extension_analysis: docs/extension-analysis.md
+  tle_assessment: runs/tle-assessment.json
 
 stages:
 
@@ -37,7 +47,33 @@ stages:
 
   - id: prepare_execution
     action: validate_environment_and_materialize_allowed_source
-    next: inspect
+    next: discover_analysis_tools
+
+  # Probe only tools declared by the selected backend profile. Probes run in
+  # the exact local/SSH task environment and are recorded as evidence. Missing
+  # optional tools are a fallback condition, not a reason to install software.
+  - id: discover_analysis_tools
+    action: probe_backend_declared_analysis_tools
+    on_complete: resolve_optional_extensions
+    on_no_tool_available: resolve_optional_extensions
+    on_disabled: resolve_optional_extensions
+    on_fail: resolve_optional_extensions
+
+  # Optional extensions are decided before optimization. TLE is disabled by
+  # default; disabled tasks do not inspect its Wiki, probe its API, or load its
+  # skill. Enabling it does not guarantee that it is usable.
+  - id: resolve_optional_extensions
+    action: resolve_task_extension_policy
+    on_none_enabled: inspect
+    on_tle_requested: validate_tle
+    on_error: workflow_error
+
+  - id: validate_tle
+    action: verify_tle_wiki_and_api_in_task_environment
+    on_available: inspect
+    on_wiki_missing: inspect
+    on_api_unavailable: inspect
+    on_error: inspect
 
   - id: inspect
     action: inspect_kernel
@@ -46,11 +82,7 @@ stages:
   - id: correctness
     action: run_correctness
     on_pass: baseline
-    on_fail: fix_correctness
-
-  - id: fix_correctness
-    action: repair_kernel
-    next: correctness
+    on_fail: finalize_without_target
 
   - id: baseline
     action: run_baseline
@@ -65,17 +97,84 @@ stages:
     on_target_reached: promote
     on_target_not_reached: diagnose
 
-  # Benchmark runs every round; profiling runs only on demand, because it is
-  # expensive. Profile when the next optimization is not already justified by
-  # the evidence at hand.
+  # Benchmark runs every round. Expensive or backend-specific analysis is
+  # selected only when existing evidence does not justify the next candidate.
   - id: diagnose
     action: diagnose_bottleneck
-    on_known_cause: optimize
-    on_unknown_cause: profile
+    on_known_cause: select_optimization_strategy
+    on_unknown_cause: select_analysis_strategy
+    on_reference_parity: finalize_without_target
+    on_no_actionable_bottleneck: finalize_without_target
+    on_backend_capability_exhausted: finalize_without_target
 
-  - id: profile
-    action: profile_kernel
-    next: optimize
+  - id: select_analysis_strategy
+    action: select_capability_driven_analysis_strategy
+    on_discover_tools: discover_analysis_tools
+    on_profile_compare: profile_candidate
+    on_profile_candidate: profile_candidate
+    on_profile_tool_needs_configuration: configure_profile_tool
+    on_benchmark_only: benchmark_driven_analysis
+    on_error: workflow_error
+
+  - id: configure_profile_tool
+    action: materialize_task_scoped_profile_commands_for_selected_tool
+    on_configured: profile_candidate
+    on_unsafe_or_unsupported: benchmark_driven_analysis
+    on_fail: benchmark_driven_analysis
+
+  - id: profile_candidate
+    action: capture_and_export_candidate_profile_with_selected_tool
+    on_reference_enabled: profile_reference
+    on_candidate_only: analyze_profile_reports
+    on_fail: benchmark_driven_analysis
+
+  - id: profile_reference
+    action: capture_and_export_reference_profile
+    on_pass: analyze_profile_reports
+    on_fail: analyze_profile_reports
+
+  - id: analyze_profile_reports
+    action: analyze_profile_reports_with_routed_skills
+    on_complete: analyze_low_level_artifacts
+    on_skill_unavailable: analyze_profile_reports_with_ai
+    on_inconclusive: analyze_profile_reports_with_ai
+    on_reference_parity: finalize_without_target
+
+  # AI fallback consumes structured exports, not an opaque binary profiler
+  # report. When both reports exist it compares candidate and reference under
+  # the same inputs and execution conditions.
+  - id: analyze_profile_reports_with_ai
+    action: analyze_structured_profile_reports_directly
+    on_complete: analyze_low_level_artifacts
+    on_reference_parity: finalize_without_target
+    on_no_actionable_bottleneck: finalize_without_target
+
+  - id: analyze_low_level_artifacts
+    action: compare_available_ir_ptx_and_machine_instructions
+    on_complete: select_optimization_strategy
+    on_unavailable: select_optimization_strategy
+    on_no_actionable_bottleneck: finalize_without_target
+    on_error: workflow_error
+
+  # Non-NVIDIA and limited-tool backends retain the common optimization loop
+  # and use the evidence their backend profile declares as available.
+  - id: benchmark_driven_analysis
+    action: diagnose_from_source_benchmark_and_available_backend_evidence
+    on_known_cause: select_optimization_strategy
+    on_no_actionable_bottleneck: finalize_without_target
+    on_backend_capability_exhausted: finalize_without_target
+
+  - id: select_optimization_strategy
+    action: select_available_optimization_extension_from_validated_assessment
+    on_extension_available: optimize_with_extension
+    on_no_safe_optimization: finalize_without_target
+    otherwise: optimize
+
+  # TLE is optional. Use it only when the task requested it and the recorded
+  # assessment confirms both the project Wiki and API are available.
+  - id: optimize_with_extension
+    action: implement_candidate_with_selected_extension
+    next: deploy_candidate
 
   - id: optimize
     action: implement_candidate
@@ -83,7 +182,8 @@ stages:
 
   - id: deploy_candidate
     action: synchronize_allowed_candidate
-    next: correctness_candidate
+    on_pass: correctness_candidate
+    on_fail: reject_candidate
 
   - id: correctness_candidate
     action: run_correctness
@@ -96,30 +196,49 @@ stages:
 
   - id: compare_candidate
     action: compare_to_best
-    on_improved: keep_candidate
+    on_improved: generalization_check
+    on_neutral: reject_candidate
     on_regressed: reject_candidate
+
+  - id: generalization_check
+    action: validate_candidate_generalization
+    on_pass: keep_candidate
+    on_not_configured: keep_candidate
+    on_overfitting_risk: reject_candidate
+    on_fail: reject_candidate
 
   - id: keep_candidate
     action: record_candidate
     next: evaluate
 
   - id: reject_candidate
-    action: record_candidate
+    action: record_rejected_candidate_with_reason
     next: restore_best
 
   - id: restore_best
     action: restore_best_correct_candidate
-    next: check_stop
+    on_pass: check_stop
+    on_fail: workflow_error
 
   # Stop conditions come from the task contract's `stop` block: candidate
   # budget, profiling budget, and repeated rounds without improvement.
   - id: check_stop
     action: evaluate_stop_conditions
     on_target_reached: promote
-    on_candidate_budget_exhausted: promote
-    on_profile_budget_exhausted: promote
+    on_reference_parity: finalize_without_target
+    on_no_actionable_bottleneck: finalize_without_target
+    on_backend_capability_exhausted: finalize_without_target
+    on_candidate_budget_exhausted: finalize_without_target
+    on_profile_budget_exhausted: finalize_without_target
     on_repeated_no_improvement: diagnose
     otherwise: diagnose
+
+  # Target-not-reached is a valid terminal outcome when the reason is supported
+  # by evidence. Restore the best correct implementation and report the gap;
+  # never relabel this outcome as a successful promotion.
+  - id: finalize_without_target
+    action: restore_best_and_record_stop_reason
+    next: report
 
   - id: promote
     action: verify_scope_goal_and_evidence
@@ -128,3 +247,7 @@ stages:
   - id: report
     action: generate_final_report
     terminal: true
+
+  - id: workflow_error
+    action: record_workflow_error_restore_best_and_exit
+    next: report

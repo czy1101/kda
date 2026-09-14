@@ -1,8 +1,11 @@
 import importlib.util
 import csv
+import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -200,6 +203,139 @@ class KernelPilotTests(unittest.TestCase):
         self.assertIn("Never invoke ssh, scp, rsync", prompt)
         self.assertIn("remote pull", prompt)
         self.assertIn("remote push", prompt)
+
+    def test_analysis_strategy_selects_reference_profile_comparison(self):
+        task = valid_task()
+        task["target"].update(
+            {"profile": "cuda-sm90", "arch": "sm90", "language": "triton"}
+        )
+        task["profile"] = {
+            "tool": "ncu",
+            "candidate_command": "profile-candidate",
+            "reference_command": "profile-reference",
+            "export_command": "export-report",
+        }
+        task["analysis"] = {
+            "profiling": "auto",
+            "reference_profile_comparison": "auto",
+            "low_level_artifacts": "auto",
+            "ai_profile_fallback": True,
+            "extensions": {"tle": "auto"},
+        }
+        discovery = {
+            "status": "complete",
+            "tools": [
+                {"id": "ncu", "available": True},
+                {"id": "nsys", "available": False},
+            ],
+        }
+        strategy = kernelpilot.select_analysis_strategy(task, discovery)
+        self.assertEqual(strategy["route"], "profile_compare")
+        self.assertEqual(strategy["selected_profiler"], "ncu")
+        self.assertEqual(strategy["low_level_artifacts"], ["triton-ir", "ptx", "sass"])
+        self.assertTrue(strategy["ai_profile_fallback"])
+        self.assertEqual(strategy["active_extensions"], [])
+        self.assertIn("tle", strategy["skipped_extensions"])
+
+    def test_cuda_backend_profile_and_discovery_skills_validate(self):
+        task = valid_task()
+        task["target"].update(
+            {"profile": "cuda-sm90", "arch": "sm90", "language": "triton"}
+        )
+        self.assertEqual(kernelpilot.validate_backend_profile(task), [])
+
+    def test_analysis_strategy_can_disable_profiling(self):
+        task = valid_task()
+        task["target"].update(
+            {"profile": "cuda-sm90", "arch": "sm90", "language": "triton"}
+        )
+        task["profile"] = {"tool": "ncu", "command": "profile-candidate"}
+        task["analysis"] = {"profiling": "disabled"}
+        strategy = kernelpilot.select_analysis_strategy(task)
+        self.assertEqual(strategy["route"], "benchmark_only")
+
+    def test_analysis_strategy_requires_live_discovery_before_auto_profile(self):
+        task = valid_task()
+        task["target"].update(
+            {"profile": "cuda-sm90", "arch": "sm90", "language": "triton"}
+        )
+        task["profile"] = {
+            "tool": "auto",
+            "tools": {"ncu": {"candidate_command": "profile-candidate"}},
+        }
+        task["analysis"] = {"tool_discovery": "auto", "profiling": "auto"}
+        strategy = kernelpilot.select_analysis_strategy(task)
+        self.assertEqual(strategy["route"], "discover_tools")
+        self.assertTrue(strategy["discovery_required"])
+
+    def test_live_discovery_records_tools_and_strategy_uses_available_one(self):
+        task = valid_task()
+        task["target"].update(
+            {"profile": "cuda-sm90", "arch": "sm90", "language": "triton"}
+        )
+        task["profile"] = {
+            "tool": "auto",
+            "tools": {
+                "ncu": {"candidate_command": "profile-with-ncu"},
+                "nsys": {"candidate_command": "profile-with-nsys"},
+            },
+        }
+        task["analysis"] = {
+            "tool_discovery": "auto",
+            "preferred_tools": ["nsys", "ncu"],
+            "profiling": "auto",
+        }
+        completed = [
+            subprocess.CompletedProcess([], 0, "", ""),
+            subprocess.CompletedProcess([], 0, "nsys 1.0", ""),
+            subprocess.CompletedProcess([], 1, "", "not found"),
+            subprocess.CompletedProcess([], 1, "", "not found"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            with patch.object(kernelpilot, "_run_environment_probe", side_effect=completed):
+                discovery = kernelpilot.discover_analysis_tools(workspace, task)
+            self.assertEqual(discovery["selected"], "nsys")
+            self.assertTrue((workspace / "runs/analysis-capabilities.json").is_file())
+            strategy = kernelpilot.select_analysis_strategy(task, discovery)
+            self.assertEqual(strategy["selected_profiler"], "nsys")
+            self.assertEqual(strategy["route"], "profile_candidate")
+            self.assertIn("ncu", strategy["unavailable_profilers"])
+
+            changed_task = dict(task)
+            changed_task["environment"] = {"setup": "export DIFFERENT_ENV=1"}
+            with self.assertRaises(kernelpilot.ContractError):
+                kernelpilot.load_analysis_capabilities(workspace, changed_task)
+
+    def test_workflow_transitions_reference_existing_stages(self):
+        workflow_path = SCRIPT.parents[1] / "workflows/kernel-optimization.yaml"
+        workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        stages = workflow["stages"]
+        ids = {stage["id"] for stage in stages}
+        self.assertEqual(len(ids), len(stages))
+        for stage in stages:
+            for key, target in stage.items():
+                if key == "next" or key == "otherwise" or key.startswith("on_"):
+                    self.assertIn(target, ids, f"{stage['id']}.{key} -> {target}")
+
+    def test_structured_result_requires_stop_reason_and_workflow_issues(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "result.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "status": "stopped",
+                        "best_candidate": "baseline",
+                        "target_reached": False,
+                        "correctness": "pass",
+                        "summary": "No actionable bottleneck remained.",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            _, errors = kernelpilot.load_final_result(path)
+            self.assertTrue(errors)
+            self.assertIn("stop_reason", errors[0])
 
 
 if __name__ == "__main__":

@@ -34,12 +34,78 @@ properties:
       always:
         type: array
         items: {type: string}
+      when_discovering:
+        type: array
+        items: {type: string}
       when_profiling:
         type: array
         items: {type: string}
       when_researching:
         type: array
         items: {type: string}
+  analysis_tools:
+    type: array
+    description: Read-only tool probes executed in the contracted task environment.
+    items:
+      type: object
+      additionalProperties: false
+      required: [id, kind, priority, probe, capabilities]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          enum: [kernel-profiler, timeline-profiler, framework-profiler, compiler-tool, profiler]
+        priority:
+          type: integer
+        probe:
+          type: string
+          minLength: 1
+        version_command:
+          type: string
+        capabilities:
+          type: array
+          items: {type: string}
+        skills:
+          type: array
+          items: {type: string}
+  capabilities:
+    type: object
+    additionalProperties: false
+    description: Optional analysis capabilities exposed by this backend profile.
+    properties:
+      profilers:
+        type: array
+        items: {type: string}
+      structured_profile_export:
+        type: boolean
+      reference_profile_comparison:
+        type: boolean
+      ai_profile_fallback:
+        type: boolean
+      low_level_artifacts:
+        type: array
+        items: {type: string}
+  extensions:
+    type: object
+    description: Optional optimization extensions available on this backend.
+    additionalProperties:
+      type: object
+      additionalProperties: false
+      required: [status, required]
+      properties:
+        status:
+          type: string
+          enum: [unavailable, experimental, available]
+        required:
+          type: boolean
+        skill:
+          type: string
+        project_marker:
+          type: string
+        reason:
+          type: string
   notes:
     type: array
     items: {type: string}

@@ -14,6 +14,16 @@ This repository defines a reusable workflow for GPU kernel optimization.
 8. Keep Codex on the controller when an execution host cannot run it; use the
    controlled adapter for contracted commands and allow-listed source sync.
 9. Do not bypass the configured transport with direct `ssh`, `scp`, or `rsync`.
+10. An evidence-backed run that does not reach its performance target is an
+    acceptable outcome. Never fabricate an improvement or hide a failed attempt.
+11. Every failed or rejected candidate needs a concrete reason and must leave
+    the remote implementation at the best correct candidate.
+12. Do not hard-code public benchmark shapes, values, or dispatch boundaries
+    solely to pass the measured cases. Shape specialization requires an
+    algorithmic justification and task authorization.
+13. Treat backend analysis-tool declarations as a probe allowlist, not proof of
+    installation. Select profiling only from current task-environment discovery
+    evidence; do not install or reconfigure tools during the run.
 
 ## Optimization loop
 
@@ -47,7 +57,7 @@ For every kernel optimization task:
 | "Optimize this specific kernel" | `.kernelpilot/task.yaml` in the task workspace |
 | Performance goal and stop conditions | [schemas/task.schema.yaml](schemas/task.schema.yaml), `.kernelpilot/task.yaml` |
 | "Run correctness after every change" | this file, [workflows/kernel-optimization.yaml](workflows/kernel-optimization.yaml) |
-| "How to profile" / "how to analyze a benchmark" | a Skill |
+| "How to discover/select/profile tools" / "how to analyze a benchmark" | a Skill |
 | "How to optimize SM90 / Triton tiling" | a Skill or its `references/` |
 | Which skills apply to a chip, architecture, and language | `backends/<id>.yaml` |
 | Local versus execution-only SSH placement | `.kernelpilot/task.yaml` `execution` block |

@@ -36,6 +36,7 @@ from controlled_ssh import (  # noqa: E402
 
 DEFAULT_TASK = Path(".kernelpilot/task.yaml")
 EVIDENCE_DIRS = ("docs", "runs", "outputs", "profile")
+ANALYSIS_CAPABILITIES = Path("runs/analysis-capabilities.json")
 REQUIRED_TOP_LEVEL = (
     "version",
     "task",
@@ -104,12 +105,358 @@ def validate_backend_profile(task: dict[str, Any]) -> list[str]:
         if accepted and actual and actual not in accepted:
             errors.append(f"backend profile {profile_id} does not match target.{target_field}")
     skill_groups = profile.get("skills") or {}
-    for group in ("always", "when_profiling", "when_researching"):
+    for group in ("always", "when_discovering", "when_profiling", "when_researching"):
         for relative in skill_groups.get(group, []):
             skill_file = KDA_ROOT / relative / "SKILL.md"
             if not skill_file.is_file():
                 errors.append(f"backend profile {profile_id} references missing skill: {relative}")
+    analysis_tools = profile.get("analysis_tools") or []
+    if not isinstance(analysis_tools, list):
+        errors.append(f"backend profile {profile_id} analysis_tools must be a list")
+    else:
+        seen_tools: set[str] = set()
+        for index, tool in enumerate(analysis_tools):
+            if not isinstance(tool, dict):
+                errors.append(f"backend profile {profile_id} analysis_tools[{index}] must be a mapping")
+                continue
+            tool_id = tool.get("id")
+            if not isinstance(tool_id, str) or not tool_id:
+                errors.append(f"backend profile {profile_id} analysis_tools[{index}].id is required")
+            elif tool_id in seen_tools:
+                errors.append(f"backend profile {profile_id} has duplicate analysis tool: {tool_id}")
+            else:
+                seen_tools.add(tool_id)
+            if not isinstance(tool.get("probe"), str) or not tool.get("probe", "").strip():
+                errors.append(f"backend profile {profile_id} analysis tool {tool_id!r} needs a probe")
+            for relative in tool.get("skills") or []:
+                skill_file = KDA_ROOT / relative / "SKILL.md"
+                if not skill_file.is_file():
+                    errors.append(
+                        f"backend profile {profile_id} analysis tool {tool_id!r} "
+                        f"references missing skill: {relative}"
+                    )
     return errors
+
+
+def _backend_profile(task: dict[str, Any]) -> dict[str, Any]:
+    profile_id = task.get("target", {}).get("profile")
+    if not profile_id:
+        return {}
+    path = KDA_ROOT / "backends" / f"{profile_id}.yaml"
+    if not path.is_file():
+        raise ContractError(f"unknown target.profile: {profile_id}")
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(profile, dict):
+        raise ContractError(f"backend profile {profile_id} must be a mapping")
+    return profile
+
+
+def _analysis_tool_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    configured = profile.get("analysis_tools") or []
+    if configured:
+        return [dict(tool) for tool in configured if isinstance(tool, dict)]
+    capabilities = profile.get("capabilities") or {}
+    return [
+        {"id": tool, "kind": "profiler", "priority": 0, "capabilities": []}
+        for tool in capabilities.get("profilers") or []
+    ]
+
+
+def _profile_tool_config(task: dict[str, Any], tool_id: str | None) -> dict[str, Any]:
+    profile_task = task.get("profile") or {}
+    config = {
+        key: value
+        for key, value in profile_task.items()
+        if key not in ("tools", "discovery", "preferred_tools")
+    }
+    per_tool = profile_task.get("tools") or {}
+    if tool_id and isinstance(per_tool, dict) and isinstance(per_tool.get(tool_id), dict):
+        config.update(per_tool[tool_id])
+    return config
+
+
+def _rank_analysis_tools(
+    specs: list[dict[str, Any]], preferred: list[str]
+) -> list[dict[str, Any]]:
+    preferred_rank = {name: index for index, name in enumerate(preferred)}
+    return sorted(
+        specs,
+        key=lambda tool: (
+            preferred_rank.get(tool.get("id"), len(preferred)),
+            -int(tool.get("priority", 0)),
+            str(tool.get("id", "")),
+        ),
+    )
+
+
+def _run_environment_probe(
+    workspace: Path,
+    task: dict[str, Any],
+    command: str,
+    ssh_bin: str,
+) -> subprocess.CompletedProcess[str]:
+    execution = task.get("execution") or {"transport": "local"}
+    if execution.get("transport", "local") == "ssh":
+        shell, script = remote_command_script(task, command)
+        return ControlledSSH(task, ssh_bin=ssh_bin).run_script(
+            script, shell=shell, capture=True
+        )
+    shell, script = _command_script(task, command)
+    return subprocess.run(
+        [shell, "-lc", script],
+        cwd=workspace,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _analysis_environment_fingerprint(workspace: Path, task: dict[str, Any]) -> str:
+    execution = task.get("execution") or {"transport": "local"}
+    environment = task.get("environment") or {}
+    target = task.get("target") or {}
+    descriptor = {
+        "transport": execution.get("transport", "local"),
+        "host": execution.get("host"),
+        "workspace": execution.get("workspace") or str(workspace.resolve()),
+        "shell": environment.get("shell", "bash"),
+        "setup": environment.get("setup", ""),
+        "backend_profile": target.get("profile"),
+        "backend": target.get("backend"),
+        "device": target.get("device"),
+        "arch": target.get("arch"),
+    }
+    encoded = json.dumps(descriptor, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def discover_analysis_tools(
+    workspace: Path,
+    task: dict[str, Any],
+    ssh_bin: str = "ssh",
+) -> dict[str, Any]:
+    """Probe only backend-declared tools in the contracted target environment."""
+    profile = _backend_profile(task)
+    policies = task.get("analysis") or {}
+    discovery_policy = policies.get("tool_discovery", "auto")
+    profiling_policy = policies.get("profiling", "auto")
+    specs = _analysis_tool_specs(profile)
+    preferred = policies.get("preferred_tools") or []
+    explicit = (task.get("profile") or {}).get("tool")
+    if explicit and explicit != "auto":
+        preferred = [explicit, *[name for name in preferred if name != explicit]]
+
+    result: dict[str, Any] = {
+        "version": 1,
+        "generated_at": _utc_now(),
+        "backend_profile": profile.get("id"),
+        "transport": (task.get("execution") or {}).get("transport", "local"),
+        "environment_fingerprint": _analysis_environment_fingerprint(workspace, task),
+        "policy": discovery_policy,
+        "selected": None,
+        "tools": [],
+    }
+    if discovery_policy == "disabled" or profiling_policy == "disabled":
+        result["status"] = "disabled"
+        result["disabled_reason"] = (
+            "analysis.profiling is disabled"
+            if profiling_policy == "disabled"
+            else "analysis.tool_discovery is disabled"
+        )
+    else:
+        for spec in _rank_analysis_tools(specs, preferred):
+            probe = spec.get("probe")
+            if not isinstance(probe, str) or not probe.strip():
+                continue
+            completed = _run_environment_probe(workspace, task, probe, ssh_bin)
+            available = completed.returncode == 0
+            record: dict[str, Any] = {
+                "id": spec.get("id"),
+                "kind": spec.get("kind", "profiler"),
+                "priority": int(spec.get("priority", 0)),
+                "available": available,
+                "probe_exit_code": completed.returncode,
+                "capabilities": spec.get("capabilities") or [],
+            }
+            stderr = (completed.stderr or "").strip()
+            if stderr:
+                record["probe_error"] = stderr[:2000]
+            version_command = spec.get("version_command")
+            if available and isinstance(version_command, str) and version_command.strip():
+                version = _run_environment_probe(workspace, task, version_command, ssh_bin)
+                version_text = ((version.stdout or "") + (version.stderr or "")).strip()
+                record["version_exit_code"] = version.returncode
+                if version_text:
+                    record["version"] = version_text[:2000]
+            result["tools"].append(record)
+        available_ids = [tool["id"] for tool in result["tools"] if tool["available"]]
+        result["selected"] = available_ids[0] if available_ids else None
+        result["status"] = "complete" if available_ids else "no_tool_available"
+
+    output = workspace / ANALYSIS_CAPABILITIES
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
+def load_analysis_capabilities(
+    workspace: Path, task: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    path = workspace / ANALYSIS_CAPABILITIES
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ContractError(f"invalid analysis capability evidence: {error}") from error
+    if not isinstance(value, dict):
+        raise ContractError("analysis capability evidence must be a JSON object")
+    if task is not None:
+        expected = _analysis_environment_fingerprint(workspace, task)
+        if value.get("environment_fingerprint") != expected:
+            raise ContractError(
+                "analysis capability evidence belongs to a different or changed task environment; "
+                "rerun discover-tools"
+            )
+    return value
+
+
+def select_analysis_strategy(
+    task: dict[str, Any], discovery: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Select analysis routes from policy, backend declarations, and live probes."""
+    profile = _backend_profile(task)
+    capabilities = profile.get("capabilities") or {}
+    policies = task.get("analysis") or {}
+    profile_task = task.get("profile") or {}
+    specs = _analysis_tool_specs(profile)
+    specs_by_id = {tool.get("id"): tool for tool in specs}
+    discovery_policy = policies.get("tool_discovery", "auto")
+    profiling_policy = policies.get("profiling", "auto")
+    preferred = policies.get("preferred_tools") or profile_task.get("preferred_tools") or []
+    explicit = profile_task.get("tool")
+
+    discovery_pending = bool(
+        specs
+        and discovery_policy != "disabled"
+        and profiling_policy != "disabled"
+        and discovery is None
+    )
+    if discovery is not None:
+        available_ids = [
+            tool.get("id")
+            for tool in discovery.get("tools") or []
+            if isinstance(tool, dict) and tool.get("available")
+        ]
+    elif discovery_policy == "disabled":
+        available_ids = [explicit] if explicit and explicit != "auto" else []
+    elif not profile.get("analysis_tools"):
+        available_ids = list(capabilities.get("profilers") or [])
+    else:
+        available_ids = []
+
+    available_specs = [specs_by_id[name] for name in available_ids if name in specs_by_id]
+    ranked = _rank_analysis_tools(available_specs, preferred)
+    if explicit and explicit != "auto":
+        ranked = [tool for tool in ranked if tool.get("id") == explicit]
+
+    selected_spec = next(
+        (
+            tool
+            for tool in ranked
+            if _profile_tool_config(task, tool.get("id")).get("candidate_command")
+            or _profile_tool_config(task, tool.get("id")).get("command")
+        ),
+        ranked[0] if ranked else None,
+    )
+    selected_profiler = selected_spec.get("id") if selected_spec else None
+    selected_capabilities = set((selected_spec or {}).get("capabilities") or [])
+    selected_config = _profile_tool_config(task, selected_profiler)
+
+    candidate_command = selected_config.get("candidate_command") or selected_config.get("command")
+    profiling_available = bool(selected_profiler and candidate_command)
+
+    comparison_policy = policies.get("reference_profile_comparison", "auto")
+    reference_available = bool(
+        (
+            "reference_comparison" in selected_capabilities
+            or capabilities.get("reference_profile_comparison")
+        )
+        and selected_config.get("reference_command")
+    )
+
+    if profiling_policy == "required" and not profiling_available and not discovery_pending:
+        raise ContractError("analysis.profiling is required but no backend profiler and candidate command are available")
+    if comparison_policy == "required" and not reference_available and not discovery_pending:
+        raise ContractError("reference profile comparison is required but unavailable or not configured")
+
+    if discovery_pending:
+        route = "discover_tools"
+    elif profiling_policy == "disabled" or not selected_profiler:
+        route = "benchmark_only"
+    elif not candidate_command:
+        route = "profile_tool_needs_configuration"
+    elif comparison_policy != "disabled" and reference_available:
+        route = "profile_compare"
+    else:
+        route = "profile_candidate"
+
+    low_level_policy = policies.get("low_level_artifacts", "auto")
+    low_level = capabilities.get("low_level_artifacts") or []
+    if low_level_policy == "disabled":
+        low_level = []
+    if low_level_policy == "required" and not low_level:
+        raise ContractError("low-level artifacts are required but the backend declares none")
+
+    requested_extensions = policies.get("extensions") or {}
+    backend_extensions = profile.get("extensions") or {}
+    active_extensions: list[str] = []
+    skipped_extensions: dict[str, str] = {}
+    for name, policy in requested_extensions.items():
+        if policy == "disabled":
+            continue
+        extension = backend_extensions.get(name) or {}
+        status = extension.get("status", "unavailable")
+        if status in ("available", "experimental"):
+            active_extensions.append(name)
+        elif policy == "required":
+            raise ContractError(f"analysis extension {name!r} is required but unavailable")
+        else:
+            skipped_extensions[name] = extension.get("reason", "not declared by backend")
+
+    return {
+        "backend_profile": profile.get("id"),
+        "route": route,
+        "tool_discovery_policy": discovery_policy,
+        "tool_discovery_status": (discovery or {}).get("status", "not_run"),
+        "discovery_required": discovery_pending,
+        "selected_profiler": selected_profiler,
+        "profilers": [tool.get("id") for tool in ranked],
+        "unavailable_profilers": [
+            tool.get("id")
+            for tool in (discovery or {}).get("tools") or []
+            if isinstance(tool, dict) and not tool.get("available")
+        ],
+        "structured_profile_export": bool(
+            "structured_export" in selected_capabilities
+            or capabilities.get("structured_profile_export")
+        ),
+        "profile_export_configured": bool(selected_config.get("export_command")),
+        "ai_profile_fallback": bool(
+            policies.get(
+                "ai_profile_fallback",
+                capabilities.get("ai_profile_fallback", True),
+            )
+        ),
+        "low_level_artifacts": low_level,
+        "active_extensions": active_extensions,
+        "skipped_extensions": skipped_extensions,
+        "discovery_skills": (profile.get("skills") or {}).get("when_discovering", []),
+        "profiling_skills": [
+            *(profile.get("skills") or {}).get("when_profiling", []),
+            *((selected_spec or {}).get("skills") or []),
+        ],
+    }
 
 
 def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
@@ -159,6 +506,36 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
 
     errors.extend(validate_backend_profile(task))
 
+    analysis = task.get("analysis")
+    if analysis is not None:
+        if not isinstance(analysis, dict):
+            errors.append("analysis must be a mapping")
+        else:
+            allowed_policies = {"auto", "disabled", "required"}
+            for field in (
+                "tool_discovery",
+                "profiling",
+                "reference_profile_comparison",
+                "low_level_artifacts",
+            ):
+                if analysis.get(field, "auto") not in allowed_policies:
+                    errors.append(f"analysis.{field} must be auto, disabled, or required")
+            preferred_tools = analysis.get("preferred_tools") or []
+            if not isinstance(preferred_tools, list) or not all(
+                isinstance(tool, str) and tool for tool in preferred_tools
+            ):
+                errors.append("analysis.preferred_tools must contain non-empty strings")
+            extensions = analysis.get("extensions") or {}
+            if not isinstance(extensions, dict):
+                errors.append("analysis.extensions must be a mapping")
+            elif any(value not in allowed_policies for value in extensions.values()):
+                errors.append("analysis extension policies must be auto, disabled, or required")
+            if not errors:
+                try:
+                    select_analysis_strategy(task)
+                except ContractError as error:
+                    errors.append(str(error))
+
     constraints = task.get("constraints", {})
     allowed = constraints.get("allowed_paths", [])
     forbidden = constraints.get("forbidden_paths", [])
@@ -167,6 +544,20 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
     overlap = sorted(set(allowed) & set(forbidden))
     if overlap:
         errors.append(f"allowed_paths and forbidden_paths overlap: {overlap}")
+
+    generalization = task.get("generalization")
+    if generalization is not None:
+        if not isinstance(generalization, dict):
+            errors.append("generalization must be a mapping")
+        else:
+            allow_specialization = generalization.get("allow_shape_specialization", False)
+            if not isinstance(allow_specialization, bool):
+                errors.append("generalization.allow_shape_specialization must be boolean")
+            guard_shapes = generalization.get("guard_shapes") or []
+            if not isinstance(guard_shapes, list) or not all(
+                isinstance(shape, str) and shape for shape in guard_shapes
+            ):
+                errors.append("generalization.guard_shapes must contain non-empty strings")
 
     environment = task.get("environment")
     if environment is not None:
@@ -203,10 +594,33 @@ def run_contract_command(
     section: str,
     *,
     capture: bool = False,
+    tool: str | None = None,
+    variant: str = "candidate",
 ) -> subprocess.CompletedProcess[str]:
-    config = task.get(section)
-    if not isinstance(config, dict) or not config.get("command"):
-        raise ContractError(f"task has no {section}.command")
+    if section == "profile":
+        if not tool:
+            discovery = load_analysis_capabilities(workspace, task) or {}
+            tool = discovery.get("selected")
+        config = _profile_tool_config(task, tool)
+        command_field = {
+            "candidate": "candidate_command",
+            "reference": "reference_command",
+            "export": "export_command",
+        }.get(variant)
+        if not command_field:
+            raise ContractError(f"unsupported profile variant: {variant}")
+        command = config.get(command_field)
+        if variant == "candidate" and not command:
+            command = config.get("command")
+        if not command:
+            raise ContractError(
+                f"task has no profile command for tool {tool!r}, variant {variant!r}"
+            )
+        config = {"command": command}
+    else:
+        config = task.get(section)
+        if not isinstance(config, dict) or not config.get("command"):
+            raise ContractError(f"task has no {section}.command")
     execution = task.get("execution") or {"transport": "local"}
     if execution.get("transport", "local") == "ssh":
         return ControlledSSH(task).run_contract(section, capture=capture)
@@ -486,7 +900,15 @@ def load_final_result(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
         result = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         return None, [f"invalid structured final result: {error}"]
-    required = ("status", "best_candidate", "target_reached", "correctness", "summary")
+    required = (
+        "status",
+        "best_candidate",
+        "target_reached",
+        "correctness",
+        "summary",
+        "stop_reason",
+        "workflow_issues",
+    )
     missing = [field for field in required if field not in result]
     if missing:
         return result, [f"structured final result missing fields: {missing}"]
@@ -527,9 +949,12 @@ and maintain runs/workflow-state.json and runs/stage-events.jsonl as required
 by the optimization prompt.
 
 Run every contracted command through the environment-aware wrapper:
+- discover backend analysis tools: python3 {driver} discover-tools --workspace {workspace}
 - correctness: python3 {driver} run correctness --workspace {workspace}
 - benchmark: python3 {driver} run benchmark --workspace {workspace}
-- profile, only when configured and justified: python3 {driver} run profile --workspace {workspace}
+- inspect the selected route: python3 {driver} strategy --workspace {workspace}
+- profile the selected tool, only when configured and justified: python3 {driver} run profile --workspace {workspace} --variant candidate
+- profile a comparable reference when configured: python3 {driver} run profile --workspace {workspace} --variant reference
 
 Before editing, create docs/draft.md and docs/plan.md and preserve a rollback
 copy of the implementation. Modify only constraints.allowed_paths. Never modify
@@ -678,10 +1103,23 @@ def main(argv: list[str] | None = None) -> int:
     validate_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     validate_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
 
+    strategy_parser = subparsers.add_parser("strategy")
+    strategy_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+    strategy_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+
+    discovery_parser = subparsers.add_parser("discover-tools")
+    discovery_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+    discovery_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+    discovery_parser.add_argument("--ssh-bin", default="ssh")
+
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("section", choices=("correctness", "benchmark", "profile"))
     run_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     run_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+    run_parser.add_argument("--tool")
+    run_parser.add_argument(
+        "--variant", choices=("candidate", "reference", "export"), default="candidate"
+    )
 
     remote_parser = subparsers.add_parser("remote")
     remote_parser.add_argument("action", choices=("inspect", "pull", "push"))
@@ -719,6 +1157,23 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         _, task = load_task(args.workspace, args.task)
+        if args.command == "strategy":
+            errors = validate_task(args.workspace, task)
+            if errors:
+                raise ContractError("invalid task contract:\n- " + "\n- ".join(errors))
+            discovery = load_analysis_capabilities(args.workspace, task)
+            print(json.dumps(select_analysis_strategy(task, discovery), indent=2))
+            return 0
+        if args.command == "discover-tools":
+            errors = validate_task(args.workspace, task)
+            if errors:
+                raise ContractError("invalid task contract:\n- " + "\n- ".join(errors))
+            print(
+                json.dumps(
+                    discover_analysis_tools(args.workspace, task, args.ssh_bin), indent=2
+                )
+            )
+            return 0
         if args.command == "remote":
             errors = validate_task(args.workspace, task)
             if errors:
@@ -740,7 +1195,13 @@ def main(argv: list[str] | None = None) -> int:
             print("task contract and environment: valid")
             return 0
         if args.command == "run":
-            result = run_contract_command(args.workspace, task, args.section)
+            result = run_contract_command(
+                args.workspace,
+                task,
+                args.section,
+                tool=args.tool,
+                variant=args.variant,
+            )
             return result.returncode
         if args.command == "optimize":
             return run_codex(

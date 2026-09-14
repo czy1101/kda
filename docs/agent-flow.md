@@ -17,14 +17,15 @@ MLSys-style benchmark work is one possible application of this loop. The same fl
 ## Minimal Loop
 
 1. Define the task contract.
-2. Let the agent inspect the local workspace.
-3. Make the agent write `docs/draft.md`.
-4. Convert the draft into an executable plan.
-5. Implement the first candidate.
-6. Validate correctness.
-7. Measure the target metric when applicable.
-8. Record evidence and decide whether to keep, revise, or reject the candidate.
-9. Repeat until the promotion criteria are met or the remaining blockers are explicit.
+2. Select the backend profile and discover its analysis tools in the real task environment.
+3. Let the agent inspect the local workspace.
+4. Make the agent write `docs/draft.md`.
+5. Convert the draft into an executable plan.
+6. Implement the first candidate.
+7. Validate correctness.
+8. Measure the target metric when applicable.
+9. Record evidence and decide whether to keep, revise, or reject the candidate.
+10. Repeat until the promotion criteria are met or the remaining blockers are explicit.
 
 For SSH tasks, materialize allow-listed source into `remote-worktree/` before
 inspection, deploy a candidate through the adapter before correctness, and use
@@ -51,6 +52,7 @@ Use simple files in the task workspace:
 - `benchmark.csv` or another tabular log for measurable results.
 - `candidates.jsonl` for candidate names, parent links, and status.
 - `profile/` for profiler output or report summaries.
+- `runs/analysis-capabilities.json` for live backend-tool discovery evidence.
 - `runs/` or `outputs/` for generated artifacts.
 
 The exact format is less important than consistency. A future reader should be able to reconstruct what changed, what was measured, and why a candidate was promoted.

@@ -8,7 +8,9 @@
     "best_candidate",
     "target_reached",
     "correctness",
-    "summary"
+    "summary",
+    "stop_reason",
+    "workflow_issues"
   ],
   "properties": {
     "status": {"enum": ["complete", "stopped", "blocked"]},
@@ -16,10 +18,37 @@
     "target_reached": {"type": "boolean"},
     "correctness": {"enum": ["pass", "fail", "not_run"]},
     "summary": {"type": "string"},
+    "stop_reason": {
+      "enum": [
+        "target_reached",
+        "reference_parity",
+        "no_actionable_bottleneck",
+        "backend_capability_exhausted",
+        "candidate_budget_exhausted",
+        "profile_budget_exhausted",
+        "correctness_blocked",
+        "workflow_error",
+        "user_stop",
+        "other"
+      ]
+    },
+    "workflow_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "category", "message", "recovery"],
+        "properties": {
+          "stage": {"type": "string"},
+          "category": {"type": "string"},
+          "message": {"type": "string"},
+          "recovery": {"type": "string"}
+        }
+      }
+    },
     "remaining_bottlenecks": {
       "type": "array",
       "items": {"type": "string"}
     }
   }
 }
-

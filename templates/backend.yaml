@@ -10,9 +10,37 @@ match:
 skills:
   always:
     - skills/<backend-optimization-skill>
+  when_discovering:
+    - skills/backend-profiler-discovery
   when_profiling:
     - skills/<backend-profiler-skill>
   when_researching: []
+
+# Ordered candidates for read-only discovery in the task's exact environment.
+# A successful probe means installed/visible, not that every profiling mode is
+# permitted. Capture failures are recorded later and fall back according to the
+# task policy. Do not put package-install commands here.
+analysis_tools:
+  - id: <tool-id>
+    kind: <kernel-profiler|timeline-profiler|framework-profiler|compiler-tool>
+    priority: 100
+    probe: <read-only command returning zero when the tool is available>
+    version_command: <read-only version command>
+    capabilities: [<structured_export|reference_comparison|kernel_counters|timeline>]
+    skills: [skills/<tool-specific-analysis-skill>]
+
+capabilities:
+  profilers: []
+  structured_profile_export: false
+  reference_profile_comparison: false
+  ai_profile_fallback: true
+  low_level_artifacts: []
+
+extensions:
+  tle:
+    status: unavailable
+    required: false
+    reason: <why this extension is unavailable on this backend>
 
 notes:
   - <routing note; do not put task-specific benchmark numbers here>

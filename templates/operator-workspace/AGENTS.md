@@ -27,6 +27,12 @@ still go through `kernelpilot.py run`.
 When `target.profile` is set, read the matching file under KDA `backends/` and
 load only the skills routed for the current stage.
 
+Before selecting a performance-analysis tool, run KernelPilot `discover-tools`
+in the contracted environment and preserve `runs/analysis-capabilities.json`.
+For SSH tasks the probes run on the executor through the controlled adapter.
+Use only backend-declared tools whose probe succeeded; do not install or
+reconfigure a missing tool as part of the optimization run.
+
 ## Principles
 
 1. Correctness has priority over performance.
@@ -36,6 +42,13 @@ load only the skills routed for the current stage.
 5. Every optimization attempt is a candidate.
 6. Record rejected and regressed candidates with a reason; never discard them silently.
 7. Do not modify the reference implementation, the correctness command, or the benchmark command.
+8. Target-not-reached is acceptable when supported by evidence. Never invent
+   measurements, suppress failures, or continue changing code only to claim a win.
+9. Record a concrete reason for every failed or rejected candidate and restore
+   the best correct candidate before continuing or reporting.
+10. Do not hard-code benchmark shapes or values. Shape-dependent optimization
+    needs an algorithmic justification, task authorization, and generalization
+    evidence when configured.
 
 ## Loop
 
@@ -53,6 +66,11 @@ load only the skills routed for the current stage.
 After a rejected remote candidate, restore the best correct mirror and push it
 through the same adapter before continuing.
 
+Stop honestly when the reference is already within the configured parity
+tolerance, no actionable bottleneck remains, the backend exposes no further
+safe analysis capability, or a configured budget is exhausted. Record the stop
+reason and remaining gap in the final report.
+
 Never silently broaden a single number into a multi-shape performance claim.
 Use `goal.direction`, `goal.aggregation`, and `goal.max_regression` to decide
 promotion, and retain the per-shape measurements in `runs/benchmark.csv`.
@@ -65,6 +83,7 @@ promotion, and retain the per-shape measurements in `runs/benchmark.csv`.
 | `docs/plan.md` | The executable plan. |
 | `runs/candidates.jsonl` | One JSON record per candidate: id, parent, hypothesis, changes, correctness, latency, baseline, speedup, decision, reason. |
 | `runs/benchmark.csv` | Per-shape measurements with columns `candidate,shape,metric_value,baseline_value,unit,status`. The runner recomputes promotion from these values. |
+| `runs/analysis-capabilities.json` | Backend-declared tools probed in this exact environment, with availability, versions, and default selection. |
 | `profile/` | Profiler output or report summaries. |
 
 A future reader must be able to reconstruct what changed, what was measured, and

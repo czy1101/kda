@@ -61,6 +61,16 @@ benchmark:
   shapes:
     - <shape that must be covered, e.g. 1x8192x128>
 
+# Keep the implementation general unless the task explicitly permits an
+# algorithmically justified shape-dependent path. Do not expose private guard
+# shapes when the evaluator intentionally keeps them hidden.
+generalization:
+  allow_shape_specialization: false
+  # command: <optional generalization validation command>
+  # guard_shapes:
+  #   - <boundary or held-out shape>
+  # max_regression: 0.02
+
 # Select the comparison target before optimization. Use `original` when the
 # candidate is judged against the unmodified implementation, or `reference`
 # when it is judged against a separate high-performance implementation.
@@ -68,11 +78,41 @@ baseline:
   name: <original|reference|other-comparator-name>
   command: <command that measures the selected comparator>
 
-# Optional: when the profiler command is omitted, profiling is at the agent's
-# discretion and is only expected when the next step is not already justified.
+# Optional. `tool: auto` selects only a profiler that is both declared by the
+# backend profile and detected in this exact environment. Per-tool commands
+# let the same task work when different profiler packages are installed.
 profile:
-  tool: <ncu|nsys|msprof|...>
-  command: <explicit profiling command>
+  tool: auto
+  # tools:
+  #   <tool-id>:
+  #     candidate_command: <capture a report for the current candidate>
+  #     reference_command: <capture a comparable report for the reference>
+  #     export_command: <export a report to structured text or CSV>
+  # low_level_commands:
+  #   ptx: <capture PTX>
+  #   sass: <capture final machine instructions>
+
+# `auto` uses only capabilities declared by the selected backend profile.
+# `required` fails the analysis stage when the capability is unavailable.
+# `disabled` bypasses that analysis path. Optional extensions are never assumed
+# to exist merely because they are named here.
+analysis:
+  tool_discovery: auto
+  preferred_tools: []              # optional task-specific order
+  profiling: auto
+  reference_profile_comparison: auto
+  low_level_artifacts: auto
+  ai_profile_fallback: true
+  extensions:
+    tle: disabled                    # default: this task does not involve TLE
+
+# Used only when analysis.extensions.tle is changed to auto or required.
+# The API probe must come from the project's tle-wiki; do not guess an import
+# name or API that the installed TLE version may not provide.
+extension_config:
+  tle:
+    wiki_path: tle-wiki
+    # api_probe_command: <read-only TLE API availability check>
 
 goal:
   metric: <latency|throughput|...>
@@ -95,3 +135,6 @@ stop:
   max_profile_runs: 10
   no_improvement_rounds: 5
   target_reached: true
+  reference_parity_tolerance: 0.02
+  allow_no_actionable_bottleneck_exit: true
+  allow_backend_capability_exhausted_exit: true

@@ -162,6 +162,29 @@ properties:
           type: string
         description: Shapes that must be covered by the measurement.
 
+  generalization:
+    type: object
+    additionalProperties: false
+    description: Optional guard against benchmark-specific specialization.
+    properties:
+      allow_shape_specialization:
+        type: boolean
+        default: false
+        description: >
+          Whether shape-dependent implementation logic is permitted. Even when
+          true it needs an algorithmic justification rather than exact benchmark values.
+      command:
+        type: string
+        description: Optional correctness/performance command covering generalization cases.
+      guard_shapes:
+        type: array
+        items: {type: string}
+        description: Additional boundary or held-out shapes used as a generalization guard.
+      max_regression:
+        type: number
+        minimum: 0
+        description: Maximum tolerated relative regression on guard shapes.
+
   baseline:
     type: object
     additionalProperties: false
@@ -181,10 +204,97 @@ properties:
     properties:
       tool:
         type: string
-        description: Profiler, for example "ncu", "nsys", "msprof".
+        description: Profiler id or "auto" for live backend-aware discovery.
       command:
         type: string
         description: Explicit profiling command. When absent, profiling is at the agent's discretion.
+      candidate_command:
+        type: string
+        description: Command that captures a profile for the current candidate.
+      reference_command:
+        type: string
+        description: Command that captures a comparable profile for the reference.
+      export_command:
+        type: string
+        description: Deterministic command that exports a profiler report to structured text or CSV.
+      low_level_commands:
+        type: object
+        additionalProperties:
+          type: string
+        description: Commands that capture named IR or instruction artifacts such as PTX or SASS.
+      tools:
+        type: object
+        description: Optional capture/export commands keyed by discovered tool id.
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          properties:
+            command:
+              type: string
+            candidate_command:
+              type: string
+            reference_command:
+              type: string
+            export_command:
+              type: string
+            low_level_commands:
+              type: object
+              additionalProperties:
+                type: string
+
+  analysis:
+    type: object
+    additionalProperties: false
+    description: Per-task policy for capability-driven performance analysis.
+    properties:
+      tool_discovery:
+        type: string
+        enum: [auto, disabled, required]
+        default: auto
+        description: Probe backend-declared analysis tools in the exact task environment.
+      preferred_tools:
+        type: array
+        items:
+          type: string
+        default: []
+        description: Optional task-specific ordering among tools that pass discovery.
+      profiling:
+        type: string
+        enum: [auto, disabled, required]
+        default: auto
+      reference_profile_comparison:
+        type: string
+        enum: [auto, disabled, required]
+        default: auto
+      low_level_artifacts:
+        type: string
+        enum: [auto, disabled, required]
+        default: auto
+      ai_profile_fallback:
+        type: boolean
+        default: true
+      extensions:
+        type: object
+        additionalProperties:
+          type: string
+          enum: [auto, disabled, required]
+
+  extension_config:
+    type: object
+    additionalProperties: false
+    description: Task-local checks for optional optimization extensions.
+    properties:
+      tle:
+        type: object
+        additionalProperties: false
+        properties:
+          wiki_path:
+            type: string
+            default: tle-wiki
+            description: Project-relative directory containing the task's TLE Wiki.
+          api_probe_command:
+            type: string
+            description: Read-only API probe derived from the installed TLE Wiki/version.
 
   goal:
     type: object
@@ -260,3 +370,17 @@ properties:
         type: boolean
         default: true
         description: When true, reaching the goal ends the task.
+      reference_parity_tolerance:
+        type: number
+        minimum: 0
+        description: >
+          Acceptable relative gap to a reference at which further optimization
+          may stop without claiming that the target was reached.
+      allow_no_actionable_bottleneck_exit:
+        type: boolean
+        default: true
+        description: Allow an evidence-backed stop when no safe, testable optimization remains.
+      allow_backend_capability_exhausted_exit:
+        type: boolean
+        default: true
+        description: Allow an evidence-backed stop when backend analysis capabilities are exhausted.

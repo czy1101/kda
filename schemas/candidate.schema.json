@@ -42,12 +42,33 @@
       "type": ["string", "null"],
       "description": "Path under profile/ or an artifact identifier that justifies this change. Required before a final promotion that relies on a bottleneck claim."
     },
+    "generalization_evidence": {
+      "type": ["string", "null"],
+      "description": "Path or artifact identifier for guard-shape or generalization evidence when required."
+    },
+    "failure_category": {
+      "enum": [
+        "correctness",
+        "performance_regression",
+        "deployment",
+        "resource_limit",
+        "tooling",
+        "overfitting_risk",
+        "inconclusive",
+        "other"
+      ]
+    },
     "decision": {
       "enum": ["keep", "revise", "reject"]
     },
     "reason": {
-      "type": ["string", "null"],
+      "type": "string",
+      "minLength": 1,
       "description": "Why it was rejected or revised. Required when decision is not \"keep\"."
+    },
+    "rollback": {
+      "enum": ["restored_best", "not_needed", "failed"],
+      "description": "Rollback result after this candidate was rejected or revised."
     },
     "recorded_at": {
       "type": "string",
@@ -60,7 +81,7 @@
         "properties": {"decision": {"enum": ["reject", "revise"]}},
         "required": ["decision"]
       },
-      "then": {"required": ["reason"]}
+      "then": {"required": ["reason", "rollback"]}
     }
   ]
 }

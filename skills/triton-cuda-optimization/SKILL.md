@@ -25,6 +25,18 @@ allowed paths as hard constraints.
 6. Record failures and regressions. Revert to the best correct candidate before
    starting the next hypothesis.
 
+Do not create exact-shape branches, expected-value shortcuts, or thresholds
+chosen only to fit the published benchmark matrix. Shape-dependent routing is
+acceptable only when permitted by the task and justified by a stable
+algorithmic crossover, resource limit, or input property. Run configured guard
+shapes or generalization checks before keeping such a candidate.
+
+It is valid to finish without reaching the target when measurements show no
+safe actionable bottleneck, the best implementation is already at reference
+parity, or the remaining gap depends on capabilities unavailable to Triton or
+the selected backend. Keep the best correct implementation and state the
+evidence and remaining gap instead of forcing another change.
+
 For choices between one-pass and partitioned/two-pass kernels, read
 `references/workspace-and-pass-selection.md`.
 

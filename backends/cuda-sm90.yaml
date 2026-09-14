@@ -10,11 +10,51 @@ match:
 skills:
   always:
     - skills/triton-cuda-optimization
-  when_profiling:
-    - skills/ncu-report-skill
+  when_discovering:
+    - skills/backend-profiler-discovery
+  when_profiling: []
   when_researching:
     - skills/KernelWiki
+
+analysis_tools:
+  - id: ncu
+    kind: kernel-profiler
+    priority: 100
+    probe: command -v ncu >/dev/null 2>&1
+    version_command: ncu --version
+    capabilities: [kernel_counters, structured_export, reference_comparison]
+    skills: [skills/ncu-report-skill, skills/nvidia-profile-comparison]
+  - id: nsys
+    kind: timeline-profiler
+    priority: 80
+    probe: command -v nsys >/dev/null 2>&1
+    version_command: nsys --version
+    capabilities: [timeline, structured_export, reference_comparison]
+  - id: torch-profiler
+    kind: framework-profiler
+    priority: 40
+    probe: python -c "import torch, torch.profiler"
+    version_command: python -c "import torch; print(torch.__version__)"
+    capabilities: [framework_events, timeline]
+
+capabilities:
+  profilers: [ncu, nsys]
+  structured_profile_export: true
+  reference_profile_comparison: true
+  ai_profile_fallback: true
+  low_level_artifacts: [triton-ir, ptx, sass]
+
+extensions:
+  tle:
+    status: experimental
+    required: false
+    skill: skills/tle-optimization
+    project_marker: tle-wiki
+    reason: Available only when the task explicitly enables TLE and both its project Wiki and API probe pass.
 
 notes:
   - Treat the backend profile as routing metadata, not as a benchmark claim.
   - Load profiling guidance only when the task exposes a profiler command.
+  - Use candidate/reference profile comparison only under identical task inputs and execution conditions.
+  - TLE is disabled by default and must pass task-local Wiki and API checks before use.
+  - Skip unavailable optional extensions and record the fallback in workflow evidence.
