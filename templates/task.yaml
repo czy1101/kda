@@ -61,9 +61,12 @@ benchmark:
   shapes:
     - <shape that must be covered, e.g. 1x8192x128>
 
+# Select the comparison target before optimization. Use `original` when the
+# candidate is judged against the unmodified implementation, or `reference`
+# when it is judged against a separate high-performance implementation.
 baseline:
-  name: <baseline provider name>
-  command: <command that measures the baseline>
+  name: <original|reference|other-comparator-name>
+  command: <command that measures the selected comparator>
 
 # Optional: when the profiler command is omitted, profiling is at the agent's
 # discretion and is only expected when the next step is not already justified.
@@ -74,7 +77,7 @@ profile:
 goal:
   metric: <latency|throughput|...>
   direction: minimize
-  aggregation: sum_ratio
+  aggregation: <sum_ratio|mean_ratio|geomean_ratio|all|any>
   relative_to_baseline: 0.90        # 1.0 = equal; 0.90 = 10% lower latency
   max_regression: 0.02              # no required shape may regress by >2%
   # target_value: <absolute target, use instead of relative_to_baseline>

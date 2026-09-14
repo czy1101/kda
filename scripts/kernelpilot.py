@@ -152,9 +152,9 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
     if direction not in ("minimize", "maximize"):
         errors.append("goal.direction must be minimize or maximize")
     aggregation = goal.get("aggregation", "sum_ratio")
-    if aggregation not in ("sum_ratio", "mean_ratio", "geomean_ratio", "all"):
+    if aggregation not in ("sum_ratio", "mean_ratio", "geomean_ratio", "all", "any"):
         errors.append(
-            "goal.aggregation must be sum_ratio, mean_ratio, geomean_ratio, or all"
+            "goal.aggregation must be sum_ratio, mean_ratio, geomean_ratio, all, or any"
         )
 
     errors.extend(validate_backend_profile(task))
@@ -390,8 +390,10 @@ def evaluate_goal(
         aggregate_ratio = sum(ratios) / len(ratios)
     elif aggregation == "geomean_ratio":
         aggregate_ratio = math.exp(sum(math.log(ratio) for ratio in ratios) / len(ratios))
-    else:
+    elif aggregation == "all":
         aggregate_ratio = max(ratios) if direction == "minimize" else min(ratios)
+    else:  # any
+        aggregate_ratio = min(ratios) if direction == "minimize" else max(ratios)
 
     relative_target = goal.get("relative_to_baseline")
     reached = None
@@ -413,6 +415,7 @@ def evaluate_goal(
             reached = False
     return {
         "candidate": candidate,
+        "comparator": task.get("baseline", {}).get("name", "baseline"),
         "aggregation": aggregation,
         "aggregate_ratio": aggregate_ratio,
         "per_shape_ratios": ratios,

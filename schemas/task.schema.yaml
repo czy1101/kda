@@ -168,7 +168,9 @@ properties:
     properties:
       name:
         type: string
-        description: Name of the baseline provider.
+        description: >
+          Selected performance comparator, for example "original" or
+          "reference". This choice is fixed before optimization begins.
       command:
         type: string
         description: Command that measures the baseline. Must be reproducible.
@@ -199,11 +201,12 @@ properties:
         description: Whether a smaller or larger metric value is better.
       aggregation:
         type: string
-        enum: [sum_ratio, mean_ratio, geomean_ratio, all]
+        enum: [sum_ratio, mean_ratio, geomean_ratio, all, any]
         default: sum_ratio
         description: >
           How required shapes are combined for promotion. `all` requires every
-          shape to satisfy the relative target.
+          shape to satisfy the relative target; `any` requires at least one
+          shape to satisfy it. The task chooses this policy explicitly.
       max_regression:
         type: number
         minimum: 0

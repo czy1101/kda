@@ -118,6 +118,54 @@ class KernelPilotTests(unittest.TestCase):
             self.assertTrue(evaluation["target_reached"])
             self.assertAlmostEqual(evaluation["aggregate_ratio"], 0.85)
 
+    def test_any_aggregation_accepts_one_reaching_shape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            runs = workspace / "runs"
+            runs.mkdir()
+            task = valid_task()
+            task["baseline"] = {"name": "reference", "command": "true"}
+            task["goal"]["aggregation"] = "any"
+            task["benchmark"]["shapes"] = ["a", "b"]
+            with (runs / "benchmark.csv").open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=(
+                        "candidate",
+                        "shape",
+                        "metric_value",
+                        "baseline_value",
+                        "unit",
+                        "status",
+                    ),
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "candidate": "c001",
+                        "shape": "a",
+                        "metric_value": 8,
+                        "baseline_value": 10,
+                        "unit": "ms",
+                        "status": "pass",
+                    }
+                )
+                writer.writerow(
+                    {
+                        "candidate": "c001",
+                        "shape": "b",
+                        "metric_value": 12,
+                        "baseline_value": 10,
+                        "unit": "ms",
+                        "status": "pass",
+                    }
+                )
+            evaluation, errors = kernelpilot.evaluate_goal(workspace, task, "c001")
+            self.assertEqual(errors, [])
+            self.assertTrue(evaluation["target_reached"])
+            self.assertEqual(evaluation["comparator"], "reference")
+            self.assertAlmostEqual(evaluation["aggregate_ratio"], 0.8)
+
     def test_remote_contract_does_not_require_local_implementation(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)

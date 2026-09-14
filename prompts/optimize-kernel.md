@@ -55,6 +55,9 @@ transition for each stage result.
   run commands. Never invoke `ssh`, `scp`, `rsync`, or an unrestricted remote
   shell directly.
 - Modify only `constraints.allowed_paths` and preserve a recoverable baseline.
+- Treat `baseline.name` and `baseline.command` as the fixed performance
+  comparator for this run; do not change the comparator after measurements
+  begin.
 - Restore the best correct candidate after a failed or rejected remote
   candidate.
 - Continue until the configured target, a configured stop condition, or the
