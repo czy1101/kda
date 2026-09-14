@@ -18,6 +18,9 @@ inputs:
 evidence:
   draft: docs/draft.md
   plan: docs/plan.md
+  final_report: docs/final-report.md
+  workflow_state: runs/workflow-state.json
+  stage_events: runs/stage-events.jsonl
   candidates: runs/candidates.jsonl
   benchmark: runs/benchmark.csv
   profile: profile/

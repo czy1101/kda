@@ -518,6 +518,11 @@ optimization prompt at {KDA_ROOT / 'prompts/optimize-kernel.md'}.
 {profile_instruction}
 {remote_instructions}
 
+Treat the workflow as the execution contract for this complete run. Start from
+its initial stage, select each following stage from the declared transition,
+and maintain runs/workflow-state.json and runs/stage-events.jsonl as required
+by the optimization prompt.
+
 Run every contracted command through the environment-aware wrapper:
 - correctness: python3 {driver} run correctness --workspace {workspace}
 - benchmark: python3 {driver} run benchmark --workspace {workspace}
