@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 import yaml
@@ -29,14 +29,19 @@ from controlled_ssh import (  # noqa: E402
     SSHAdapterError,
     command_script as remote_command_script,
     inspect_remote,
+    list_tle_wiki,
     mirror_root,
     pull_allowed,
     push_allowed,
+    read_tle_wiki,
 )
 
 DEFAULT_TASK = Path(".kernelpilot/task.yaml")
 EVIDENCE_DIRS = ("docs", "runs", "outputs", "profile")
 ANALYSIS_CAPABILITIES = Path("runs/analysis-capabilities.json")
+ANALYSIS_STRATEGY = Path("runs/analysis-strategy.json")
+TLE_ASSESSMENT = Path("runs/tle-assessment.json")
+CHECKPOINT_ROOT = Path(".kernelpilot/checkpoints")
 REQUIRED_TOP_LEVEL = (
     "version",
     "task",
@@ -44,6 +49,7 @@ REQUIRED_TOP_LEVEL = (
     "implementation",
     "correctness",
     "benchmark",
+    "baseline",
     "goal",
 )
 
@@ -79,22 +85,63 @@ def load_task(workspace: Path, task_path: Path | None = None) -> tuple[Path, dic
     return path.resolve(), task
 
 
-def validate_backend_profile(task: dict[str, Any]) -> list[str]:
-    profile_id = task.get("target", {}).get("profile")
-    if not profile_id:
-        return []
-    path = KDA_ROOT / "backends" / f"{profile_id}.yaml"
-    if not path.is_file():
-        return [f"unknown target.profile: {profile_id}"]
-    try:
+def _profile_matches_target(profile: dict[str, Any], task: dict[str, Any]) -> bool:
+    target = task.get("target") or {}
+    match = profile.get("match") or {}
+    if match.get("backend") != target.get("backend"):
+        return False
+    for field, target_field in (
+        ("arches", "arch"),
+        ("devices", "device"),
+        ("languages", "language"),
+    ):
+        accepted = match.get(field) or []
+        actual = target.get(target_field)
+        if accepted and actual and actual not in accepted:
+            return False
+    return True
+
+
+def _matching_backend_profiles(task: dict[str, Any]) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+    for path in sorted((KDA_ROOT / "backends").glob("*.yaml")):
         profile = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as error:
-        return [f"invalid backend profile {profile_id}: {error}"]
-    if not isinstance(profile, dict):
-        return [f"backend profile {profile_id} must be a mapping"]
+        if isinstance(profile, dict) and _profile_matches_target(profile, task):
+            matches.append(profile)
+    return matches
+
+
+def _backend_profile(task: dict[str, Any]) -> dict[str, Any]:
+    profile_id = task.get("target", {}).get("profile")
+    if profile_id:
+        path = KDA_ROOT / "backends" / f"{profile_id}.yaml"
+        if not path.is_file():
+            raise ContractError(f"unknown target.profile: {profile_id}")
+        profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(profile, dict):
+            raise ContractError(f"backend profile {profile_id} must be a mapping")
+        return profile
+    matches = _matching_backend_profiles(task)
+    if len(matches) > 1:
+        ids = [profile.get("id") for profile in matches]
+        raise ContractError(f"multiple backend profiles match target; set target.profile: {ids}")
+    return matches[0] if matches else {}
+
+
+def validate_backend_profile(task: dict[str, Any]) -> list[str]:
+    requested_id = task.get("target", {}).get("profile")
+    try:
+        profile = _backend_profile(task)
+    except (ContractError, yaml.YAMLError) as error:
+        return [str(error)]
+    if not profile:
+        return []
+    profile_id = profile.get("id")
     errors: list[str] = []
-    if profile.get("version") != 1 or profile.get("id") != profile_id:
+    if profile.get("version") != 1 or not profile_id:
         errors.append(f"backend profile {profile_id} has an invalid version or id")
+    if requested_id and profile_id != requested_id:
+        errors.append(f"backend profile id {profile_id!r} does not match target.profile")
     target = task.get("target", {})
     match = profile.get("match") or {}
     if match.get("backend") != target.get("backend"):
@@ -135,20 +182,16 @@ def validate_backend_profile(task: dict[str, Any]) -> list[str]:
                         f"backend profile {profile_id} analysis tool {tool_id!r} "
                         f"references missing skill: {relative}"
                     )
+    for name, extension in (profile.get("extensions") or {}).items():
+        if not isinstance(extension, dict):
+            errors.append(f"backend profile {profile_id} extension {name!r} must be a mapping")
+            continue
+        relative = extension.get("skill")
+        if relative and not (KDA_ROOT / relative / "SKILL.md").is_file():
+            errors.append(
+                f"backend profile {profile_id} extension {name!r} references missing skill: {relative}"
+            )
     return errors
-
-
-def _backend_profile(task: dict[str, Any]) -> dict[str, Any]:
-    profile_id = task.get("target", {}).get("profile")
-    if not profile_id:
-        return {}
-    path = KDA_ROOT / "backends" / f"{profile_id}.yaml"
-    if not path.is_file():
-        raise ContractError(f"unknown target.profile: {profile_id}")
-    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(profile, dict):
-        raise ContractError(f"backend profile {profile_id} must be a mapping")
-    return profile
 
 
 def _analysis_tool_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
@@ -221,7 +264,7 @@ def _analysis_environment_fingerprint(workspace: Path, task: dict[str, Any]) -> 
         "workspace": execution.get("workspace") or str(workspace.resolve()),
         "shell": environment.get("shell", "bash"),
         "setup": environment.get("setup", ""),
-        "backend_profile": target.get("profile"),
+        "backend_profile": (_backend_profile(task) or {}).get("id"),
         "backend": target.get("backend"),
         "device": target.get("device"),
         "arch": target.get("arch"),
@@ -321,8 +364,89 @@ def load_analysis_capabilities(
     return value
 
 
+def assess_tle(workspace: Path, task: dict[str, Any], ssh_bin: str = "ssh") -> dict[str, Any]:
+    """Check the configured TLE Wiki and task-declared API probe without installing anything."""
+    policy = (task.get("analysis") or {}).get("extensions", {}).get("tle", "disabled")
+    config = (task.get("extension_config") or {}).get("tle") or {}
+    wiki_path = config.get("wiki_path", "tle-wiki")
+    result: dict[str, Any] = {
+        "version": 1,
+        "generated_at": _utc_now(),
+        "environment_fingerprint": _analysis_environment_fingerprint(workspace, task),
+        "policy": policy,
+        "wiki_path": wiki_path,
+        "wiki_available": False,
+        "api_probe_configured": bool(config.get("api_probe_command")),
+        "api_available": False,
+        "status": "disabled" if policy == "disabled" else "unavailable",
+    }
+    if policy != "disabled":
+        execution = task.get("execution") or {"transport": "local"}
+        try:
+            if execution.get("transport", "local") == "ssh":
+                result["wiki_files"] = list_tle_wiki(task, ssh_bin=ssh_bin)
+                result["wiki_available"] = True
+            else:
+                root = (workspace / wiki_path).resolve()
+                try:
+                    root.relative_to(workspace.resolve())
+                except ValueError as error:
+                    raise ContractError("extension_config.tle.wiki_path escapes workspace") from error
+                if root.is_dir():
+                    result["wiki_available"] = True
+                    result["wiki_files"] = [
+                        str(path.relative_to(root)) for path in sorted(root.rglob("*")) if path.is_file()
+                    ]
+                else:
+                    result["reason"] = "configured tle-wiki directory is missing"
+        except (SSHAdapterError, OSError) as error:
+            result["reason"] = str(error)
+
+        probe = config.get("api_probe_command")
+        if result["wiki_available"] and probe:
+            completed = _run_environment_probe(workspace, task, probe, ssh_bin)
+            result["api_probe_exit_code"] = completed.returncode
+            output = ((completed.stdout or "") + (completed.stderr or "")).strip()
+            if output:
+                result["api_probe_output"] = output[:4000]
+            result["api_available"] = completed.returncode == 0
+            if completed.returncode != 0:
+                result["reason"] = "TLE API probe failed"
+        elif result["wiki_available"] and not probe:
+            result["reason"] = "extension_config.tle.api_probe_command is not configured"
+
+        if result["wiki_available"] and result["api_available"]:
+            result["status"] = "available"
+
+    output_path = workspace / TLE_ASSESSMENT
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
+def load_tle_assessment(
+    workspace: Path, task: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    path = workspace / TLE_ASSESSMENT
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ContractError(f"invalid TLE assessment evidence: {error}") from error
+    if not isinstance(value, dict):
+        raise ContractError("TLE assessment evidence must be a JSON object")
+    if task is not None:
+        expected = _analysis_environment_fingerprint(workspace, task)
+        if value.get("environment_fingerprint") != expected:
+            raise ContractError("TLE assessment is stale; rerun assess-tle")
+    return value
+
+
 def select_analysis_strategy(
-    task: dict[str, Any], discovery: dict[str, Any] | None = None
+    task: dict[str, Any],
+    discovery: dict[str, Any] | None = None,
+    tle_assessment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Select analysis routes from policy, backend declarations, and live probes."""
     profile = _backend_profile(task)
@@ -411,13 +535,26 @@ def select_analysis_strategy(
     requested_extensions = policies.get("extensions") or {}
     backend_extensions = profile.get("extensions") or {}
     active_extensions: list[str] = []
+    pending_extensions: list[str] = []
     skipped_extensions: dict[str, str] = {}
     for name, policy in requested_extensions.items():
         if policy == "disabled":
             continue
         extension = backend_extensions.get(name) or {}
         status = extension.get("status", "unavailable")
-        if status in ("available", "experimental"):
+        if name == "tle" and status in ("available", "experimental"):
+            assessment_status = (tle_assessment or {}).get("status")
+            if assessment_status == "available":
+                active_extensions.append(name)
+            elif tle_assessment is None:
+                pending_extensions.append(name)
+            elif policy == "required":
+                raise ContractError("TLE is required but its Wiki/API assessment did not pass")
+            else:
+                skipped_extensions[name] = (tle_assessment or {}).get(
+                    "reason", "TLE Wiki/API assessment did not pass"
+                )
+        elif status in ("available", "experimental"):
             active_extensions.append(name)
         elif policy == "required":
             raise ContractError(f"analysis extension {name!r} is required but unavailable")
@@ -426,6 +563,7 @@ def select_analysis_strategy(
 
     return {
         "backend_profile": profile.get("id"),
+        "environment_fingerprint": (discovery or {}).get("environment_fingerprint"),
         "route": route,
         "tool_discovery_policy": discovery_policy,
         "tool_discovery_status": (discovery or {}).get("status", "not_run"),
@@ -450,6 +588,7 @@ def select_analysis_strategy(
         ),
         "low_level_artifacts": low_level,
         "active_extensions": active_extensions,
+        "pending_extensions": pending_extensions,
         "skipped_extensions": skipped_extensions,
         "discovery_skills": (profile.get("skills") or {}).get("when_discovering", []),
         "profiling_skills": [
@@ -492,9 +631,21 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
         if not isinstance(command, str) or not command.strip():
             errors.append(f"{section}.command must be a non-empty string")
 
+    baseline = task.get("baseline") or {}
+    if not isinstance(baseline.get("name"), str) or not baseline.get("name", "").strip():
+        errors.append("baseline.name must be a non-empty comparator name")
+    baseline_command = baseline.get("command")
+    if baseline_command is not None and (
+        not isinstance(baseline_command, str) or not baseline_command.strip()
+    ):
+        errors.append("baseline.command must be a non-empty string when configured")
+
     goal = task.get("goal", {})
-    if "relative_to_baseline" not in goal and "target_value" not in goal:
-        errors.append("goal needs relative_to_baseline or target_value")
+    configured_targets = [
+        field for field in ("relative_to_baseline", "target_value") if field in goal
+    ]
+    if len(configured_targets) != 1:
+        errors.append("goal needs exactly one of relative_to_baseline or target_value")
     direction = goal.get("direction", "minimize")
     if direction not in ("minimize", "maximize"):
         errors.append("goal.direction must be minimize or maximize")
@@ -539,6 +690,10 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
     constraints = task.get("constraints", {})
     allowed = constraints.get("allowed_paths", [])
     forbidden = constraints.get("forbidden_paths", [])
+    try:
+        _allowed_checkpoint_paths(task)
+    except ContractError as error:
+        errors.append(str(error))
     if implementation_path and allowed and implementation_path not in allowed:
         errors.append("implementation.path must appear in constraints.allowed_paths")
     overlap = sorted(set(allowed) & set(forbidden))
@@ -574,6 +729,26 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
             if preflight is not None and not isinstance(preflight, dict):
                 errors.append("environment.preflight must be a mapping")
 
+    extension_config = task.get("extension_config")
+    if extension_config is not None:
+        if not isinstance(extension_config, dict):
+            errors.append("extension_config must be a mapping")
+        else:
+            tle = extension_config.get("tle") or {}
+            if not isinstance(tle, dict):
+                errors.append("extension_config.tle must be a mapping")
+            else:
+                wiki_path = tle.get("wiki_path", "tle-wiki")
+                if not isinstance(wiki_path, str) or not wiki_path:
+                    errors.append("extension_config.tle.wiki_path must be a non-empty string")
+                else:
+                    parsed = PurePosixPath(wiki_path)
+                    if parsed.is_absolute() or ".." in parsed.parts:
+                        errors.append("extension_config.tle.wiki_path must stay inside the task workspace")
+                probe = tle.get("api_probe_command")
+                if probe is not None and (not isinstance(probe, str) or not probe.strip()):
+                    errors.append("extension_config.tle.api_probe_command must be a non-empty string")
+
     return errors
 
 
@@ -599,8 +774,16 @@ def run_contract_command(
 ) -> subprocess.CompletedProcess[str]:
     if section == "profile":
         if not tool:
-            discovery = load_analysis_capabilities(workspace, task) or {}
-            tool = discovery.get("selected")
+            strategy_path = workspace / ANALYSIS_STRATEGY
+            if strategy_path.is_file():
+                strategy = json.loads(strategy_path.read_text(encoding="utf-8"))
+                expected = _analysis_environment_fingerprint(workspace, task)
+                if strategy.get("environment_fingerprint") != expected:
+                    raise ContractError("analysis strategy is stale; rerun strategy")
+                tool = strategy.get("selected_profiler")
+            if not tool:
+                discovery = load_analysis_capabilities(workspace, task) or {}
+                tool = discovery.get("selected")
         config = _profile_tool_config(task, tool)
         command_field = {
             "candidate": "candidate_command",
@@ -623,7 +806,8 @@ def run_contract_command(
             raise ContractError(f"task has no {section}.command")
     execution = task.get("execution") or {"transport": "local"}
     if execution.get("transport", "local") == "ssh":
-        return ControlledSSH(task).run_contract(section, capture=capture)
+        shell, script = remote_command_script(task, config["command"])
+        return ControlledSSH(task).run_script(script, shell=shell, capture=capture)
     shell, script = _command_script(task, config["command"])
     return subprocess.run(
         [shell, "-lc", script],
@@ -681,6 +865,97 @@ def _iter_contract_paths(workspace: Path, paths: Iterable[str]) -> Iterable[Path
             yield path
 
 
+def _allowed_checkpoint_paths(task: dict[str, Any]) -> list[str]:
+    values = task.get("constraints", {}).get("allowed_paths") or []
+    paths: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value:
+            raise ContractError("constraints.allowed_paths must contain non-empty strings")
+        path = PurePosixPath(value)
+        if path.is_absolute() or ".." in path.parts:
+            raise ContractError(f"allowed path must stay inside the workspace: {value}")
+        paths.append(path.as_posix())
+    if not paths:
+        raise ContractError("constraints.allowed_paths cannot be empty")
+    return paths
+
+
+def _checkpoint_source_root(workspace: Path, task: dict[str, Any]) -> Path:
+    execution = task.get("execution") or {"transport": "local"}
+    return mirror_root(workspace) if execution.get("transport", "local") == "ssh" else workspace
+
+
+def _copy_checkpoint_entry(source: Path, destination: Path) -> None:
+    if source.is_symlink():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.symlink_to(os.readlink(source), target_is_directory=source.is_dir())
+    elif source.is_dir():
+        shutil.copytree(source, destination, symlinks=True)
+    elif source.is_file():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    else:
+        raise ContractError(f"cannot checkpoint missing allowed path: {source}")
+
+
+def save_checkpoint(
+    workspace: Path,
+    task: dict[str, Any],
+    name: str,
+    candidate: str,
+) -> dict[str, Any]:
+    if name not in ("baseline", "best"):
+        raise ContractError("checkpoint name must be baseline or best")
+    source_root = _checkpoint_source_root(workspace, task)
+    checkpoint_parent = workspace / CHECKPOINT_ROOT
+    checkpoint_parent.mkdir(parents=True, exist_ok=True)
+    temporary = checkpoint_parent / f".{name}.next"
+    destination = checkpoint_parent / name
+    if temporary.exists():
+        shutil.rmtree(temporary)
+    temporary.mkdir()
+    for relative in _allowed_checkpoint_paths(task):
+        _copy_checkpoint_entry(source_root / relative, temporary / relative)
+    metadata = {
+        "version": 1,
+        "name": name,
+        "candidate": candidate,
+        "saved_at": _utc_now(),
+        "paths": _allowed_checkpoint_paths(task),
+    }
+    (temporary / "checkpoint.json").write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    )
+    if destination.exists():
+        shutil.rmtree(destination)
+    temporary.rename(destination)
+    return metadata
+
+
+def restore_checkpoint(
+    workspace: Path,
+    task: dict[str, Any],
+    name: str = "best",
+) -> dict[str, Any]:
+    checkpoint = workspace / CHECKPOINT_ROOT / name
+    metadata_path = checkpoint / "checkpoint.json"
+    if not metadata_path.is_file():
+        raise ContractError(f"checkpoint does not exist: {name}")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    destination_root = _checkpoint_source_root(workspace, task)
+    for relative in _allowed_checkpoint_paths(task):
+        source = checkpoint / relative
+        destination = destination_root / relative
+        if destination.is_symlink() or destination.is_file():
+            destination.unlink()
+        elif destination.is_dir():
+            shutil.rmtree(destination)
+        _copy_checkpoint_entry(source, destination)
+    execution = task.get("execution") or {"transport": "local"}
+    if execution.get("transport", "local") == "ssh":
+        metadata["pushed"] = push_allowed(workspace, task)
+    metadata["restored_at"] = _utc_now()
+    return metadata
 def _digest(path: Path) -> str:
     if not path.exists() and not path.is_symlink():
         return "<missing>"
@@ -712,12 +987,12 @@ def compare_forbidden(
     return changed
 
 
-def _load_candidate_ids(workspace: Path) -> tuple[list[str], list[str]]:
-    ids: list[str] = []
+def _load_candidate_records(workspace: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    records: list[dict[str, Any]] = []
     errors: list[str] = []
     candidates_path = workspace / "runs/candidates.jsonl"
     if not candidates_path.is_file():
-        return ids, errors
+        return records, errors
     seen: set[str] = set()
     with candidates_path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, 1):
@@ -727,6 +1002,9 @@ def _load_candidate_ids(workspace: Path) -> tuple[list[str], list[str]]:
                 record = json.loads(line)
             except json.JSONDecodeError as error:
                 errors.append(f"candidates.jsonl:{line_number}: {error}")
+                continue
+            if not isinstance(record, dict):
+                errors.append(f"candidates.jsonl:{line_number}: record must be an object")
                 continue
             for field in ("id", "hypothesis", "correctness", "decision"):
                 if field not in record:
@@ -738,8 +1016,20 @@ def _load_candidate_ids(workspace: Path) -> tuple[list[str], list[str]]:
                 errors.append(f"candidates.jsonl:{line_number}: duplicate id {candidate_id}")
             if candidate_id:
                 seen.add(candidate_id)
-                ids.append(candidate_id)
-    return ids, errors
+            if record.get("correctness") not in ("pass", "fail", "not_run"):
+                errors.append(f"candidates.jsonl:{line_number}: invalid correctness")
+            decision = record.get("decision")
+            if decision not in ("keep", "revise", "reject"):
+                errors.append(f"candidates.jsonl:{line_number}: invalid decision")
+            if decision in ("revise", "reject"):
+                if not record.get("reason"):
+                    errors.append(f"candidates.jsonl:{line_number}: rejected/revised candidate needs reason")
+                if record.get("rollback") not in ("restored_best", "not_needed", "failed"):
+                    errors.append(f"candidates.jsonl:{line_number}: rejected/revised candidate needs rollback")
+            if decision == "keep" and record.get("correctness") != "pass":
+                errors.append(f"candidates.jsonl:{line_number}: kept candidate must pass correctness")
+            records.append(record)
+    return records, errors
 
 
 def evaluate_goal(
@@ -800,14 +1090,19 @@ def evaluate_goal(
     direction = goal.get("direction", "minimize")
     if aggregation == "sum_ratio":
         aggregate_ratio = sum(values) / sum(baselines)
+        aggregate_value = sum(values)
     elif aggregation == "mean_ratio":
         aggregate_ratio = sum(ratios) / len(ratios)
+        aggregate_value = sum(values) / len(values)
     elif aggregation == "geomean_ratio":
         aggregate_ratio = math.exp(sum(math.log(ratio) for ratio in ratios) / len(ratios))
+        aggregate_value = math.exp(sum(math.log(value) for value in values) / len(values))
     elif aggregation == "all":
         aggregate_ratio = max(ratios) if direction == "minimize" else min(ratios)
+        aggregate_value = max(values) if direction == "minimize" else min(values)
     else:  # any
         aggregate_ratio = min(ratios) if direction == "minimize" else max(ratios)
+        aggregate_value = min(values) if direction == "minimize" else max(values)
 
     relative_target = goal.get("relative_to_baseline")
     reached = None
@@ -817,6 +1112,24 @@ def evaluate_goal(
             if direction == "minimize"
             else aggregate_ratio >= relative_target
         )
+    absolute_target = goal.get("target_value")
+    if absolute_target is not None:
+        if aggregation == "all":
+            reached = all(
+                value <= absolute_target if direction == "minimize" else value >= absolute_target
+                for value in values
+            )
+        elif aggregation == "any":
+            reached = any(
+                value <= absolute_target if direction == "minimize" else value >= absolute_target
+                for value in values
+            )
+        else:
+            reached = (
+                aggregate_value <= absolute_target
+                if direction == "minimize"
+                else aggregate_value >= absolute_target
+            )
     max_regression = goal.get("max_regression")
     regression_ok = True
     if max_regression is not None:
@@ -832,6 +1145,7 @@ def evaluate_goal(
         "comparator": task.get("baseline", {}).get("name", "baseline"),
         "aggregation": aggregation,
         "aggregate_ratio": aggregate_ratio,
+        "aggregate_value": aggregate_value,
         "per_shape_ratios": ratios,
         "regression_ok": regression_ok,
         "target_reached": reached,
@@ -847,6 +1161,9 @@ def verify_evidence(
     required = (
         "docs/draft.md",
         "docs/plan.md",
+        "docs/final-report.md",
+        "runs/workflow-state.json",
+        "runs/stage-events.jsonl",
         "runs/candidates.jsonl",
         "runs/benchmark.csv",
     )
@@ -855,7 +1172,32 @@ def verify_evidence(
         if not path.is_file() or path.stat().st_size == 0:
             errors.append(f"missing or empty evidence file: {relative}")
 
-    candidate_ids, candidate_errors = _load_candidate_ids(workspace)
+    if task is not None:
+        tle_policy = (
+            task.get("extensions", {}).get("tle", {}).get("policy", "disabled")
+        )
+        if tle_policy != "disabled":
+            try:
+                load_tle_assessment(workspace, task)
+            except ContractError as error:
+                errors.append(f"invalid or missing TLE assessment evidence: {error}")
+
+        analysis = task.get("analysis", {})
+        profile = _backend_profile(task) or {}
+        if (
+            analysis.get("tool_discovery", "auto") != "disabled"
+            and analysis.get("profiling", "auto") != "disabled"
+            and profile.get("analysis_tools")
+        ):
+            capabilities_path = workspace / ANALYSIS_CAPABILITIES
+            if not capabilities_path.is_file() or capabilities_path.stat().st_size == 0:
+                errors.append(
+                    "missing or empty analysis-tool discovery evidence: "
+                    f"{ANALYSIS_CAPABILITIES}"
+                )
+
+    candidate_records, candidate_errors = _load_candidate_records(workspace)
+    candidate_ids = [record.get("id") for record in candidate_records if record.get("id")]
     errors.extend(candidate_errors)
     if task is not None:
         maximum = task.get("stop", {}).get("max_candidates")
@@ -880,6 +1222,11 @@ def verify_evidence(
         if best and best not in candidate_ids:
             errors.append(f"final result names unknown best candidate: {best}")
         if best:
+            best_records = [record for record in candidate_records if record.get("id") == best]
+            if best_records and best_records[-1].get("correctness") != "pass":
+                errors.append(f"final best candidate {best!r} did not pass recorded correctness")
+            if final_result.get("correctness") != "pass":
+                errors.append("final result correctness must be pass for a selected best candidate")
             evaluation, goal_errors = evaluate_goal(workspace, task, best)
             errors.extend(goal_errors)
             if evaluation is not None:
@@ -918,7 +1265,7 @@ def load_final_result(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
 def build_prompt(workspace: Path, task: dict[str, Any]) -> str:
     driver = KDA_ROOT / "scripts/kernelpilot.py"
     execution = task.get("execution") or {"transport": "local"}
-    profile_id = task.get("target", {}).get("profile")
+    profile_id = (_backend_profile(task) or {}).get("id")
     profile_instruction = ""
     if profile_id:
         profile_instruction = f"""
@@ -936,6 +1283,9 @@ another remote shell directly. Inspect and edit only the local mirror at
 - push: python3 {driver} remote push --workspace {workspace}
 The push is rejected if a path is not allow-listed or the remote file changed
 since the last pull. Contracted commands below execute on the remote host.
+When TLE is enabled, inspect its remote Wiki only through:
+- list: python3 {driver} remote list-wiki --workspace {workspace}
+- read: python3 {driver} remote read-wiki --workspace {workspace} --path <file-inside-wiki>
 """
     return f"""Read the task workspace's AGENTS.md and .kernelpilot/task.yaml, then follow
 the KDA workflow at {KDA_ROOT / 'workflows/kernel-optimization.yaml'} and the
@@ -950,11 +1300,15 @@ by the optimization prompt.
 
 Run every contracted command through the environment-aware wrapper:
 - discover backend analysis tools: python3 {driver} discover-tools --workspace {workspace}
+- assess TLE only when enabled: python3 {driver} assess-tle --workspace {workspace}
 - correctness: python3 {driver} run correctness --workspace {workspace}
+- baseline, when configured: python3 {driver} run baseline --workspace {workspace}
 - benchmark: python3 {driver} run benchmark --workspace {workspace}
 - inspect the selected route: python3 {driver} strategy --workspace {workspace}
 - profile the selected tool, only when configured and justified: python3 {driver} run profile --workspace {workspace} --variant candidate
 - profile a comparable reference when configured: python3 {driver} run profile --workspace {workspace} --variant reference
+- save a correct improved candidate as the recoverable best: python3 {driver} checkpoint save-best --workspace {workspace} --candidate <candidate-id>
+- restore the current best when needed: python3 {driver} checkpoint restore-best --workspace {workspace}
 
 Before editing, create docs/draft.md and docs/plan.md and preserve a rollback
 copy of the implementation. Modify only constraints.allowed_paths. Never modify
@@ -989,6 +1343,9 @@ def run_codex(
         before = {}
     else:
         before = snapshot_forbidden(workspace, task)
+    if not dry_run:
+        save_checkpoint(workspace, task, "baseline", "baseline")
+        save_checkpoint(workspace, task, "best", "baseline")
     prompt = build_prompt(workspace, task)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     events_path = workspace / "runs" / f"codex-events-{timestamp}.jsonl"
@@ -1021,28 +1378,48 @@ def run_codex(
         return 0
 
     thread_id: str | None = None
-    with events_path.open("w", encoding="utf-8") as events:
-        process = subprocess.Popen(
-            command,
-            cwd=workspace,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=None,
-        )
-        assert process.stdout is not None
-        for line in process.stdout:
-            events.write(line)
-            events.flush()
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if event.get("type") == "thread.started":
-                thread_id = event.get("thread_id")
-        returncode = process.wait()
+    returncode = 1
+    restoration: dict[str, Any] | None = None
+    restoration_errors: list[str] = []
+    try:
+        with events_path.open("w", encoding="utf-8") as events:
+            process = subprocess.Popen(
+                command,
+                cwd=workspace,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=None,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                events.write(line)
+                events.flush()
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("type") == "thread.started":
+                    thread_id = event.get("thread_id")
+            returncode = process.wait()
+    finally:
+        try:
+            restoration = restore_checkpoint(workspace, task, "best")
+        except (ContractError, SSHAdapterError, OSError, json.JSONDecodeError) as error:
+            restoration_errors.append(f"automatic best-checkpoint restore failed: {error}")
 
     final_result, final_errors = load_final_result(final_path)
-    evidence_errors = final_errors + verify_evidence(workspace, task, final_result)
+    if final_result and restoration:
+        reported_best = final_result.get("best_candidate")
+        restored_best = restoration.get("candidate")
+        if reported_best and reported_best != restored_best:
+            restoration_errors.append(
+                f"final best candidate {reported_best!r} does not match restored checkpoint {restored_best!r}"
+            )
+    evidence_errors = (
+        final_errors
+        + restoration_errors
+        + verify_evidence(workspace, task, final_result)
+    )
     forbidden_changes = [] if remote else compare_forbidden(workspace, task, before)
     state.update(
         {
@@ -1054,6 +1431,7 @@ def run_codex(
             "thread_id": thread_id,
             "evidence_errors": evidence_errors,
             "forbidden_changes": forbidden_changes,
+            "restoration": restoration,
             "result": final_result,
         }
     )
@@ -1112,8 +1490,15 @@ def main(argv: list[str] | None = None) -> int:
     discovery_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
     discovery_parser.add_argument("--ssh-bin", default="ssh")
 
+    tle_parser = subparsers.add_parser("assess-tle")
+    tle_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+    tle_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+    tle_parser.add_argument("--ssh-bin", default="ssh")
+
     run_parser = subparsers.add_parser("run")
-    run_parser.add_argument("section", choices=("correctness", "benchmark", "profile"))
+    run_parser.add_argument(
+        "section", choices=("correctness", "baseline", "benchmark", "profile")
+    )
     run_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     run_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
     run_parser.add_argument("--tool")
@@ -1122,10 +1507,19 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     remote_parser = subparsers.add_parser("remote")
-    remote_parser.add_argument("action", choices=("inspect", "pull", "push"))
+    remote_parser.add_argument(
+        "action", choices=("inspect", "pull", "push", "list-wiki", "read-wiki")
+    )
     remote_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     remote_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
     remote_parser.add_argument("--ssh-bin", default="ssh")
+    remote_parser.add_argument("--path")
+
+    checkpoint_parser = subparsers.add_parser("checkpoint")
+    checkpoint_parser.add_argument("action", choices=("save-best", "restore-best"))
+    checkpoint_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+    checkpoint_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+    checkpoint_parser.add_argument("--candidate")
 
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
@@ -1162,7 +1556,12 @@ def main(argv: list[str] | None = None) -> int:
             if errors:
                 raise ContractError("invalid task contract:\n- " + "\n- ".join(errors))
             discovery = load_analysis_capabilities(args.workspace, task)
-            print(json.dumps(select_analysis_strategy(task, discovery), indent=2))
+            tle = load_tle_assessment(args.workspace, task)
+            strategy = select_analysis_strategy(task, discovery, tle)
+            output = args.workspace / ANALYSIS_STRATEGY
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(strategy, indent=2) + "\n", encoding="utf-8")
+            print(json.dumps(strategy, indent=2))
             return 0
         if args.command == "discover-tools":
             errors = validate_task(args.workspace, task)
@@ -1174,6 +1573,14 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
+        if args.command == "assess-tle":
+            errors = validate_task(args.workspace, task)
+            if errors:
+                raise ContractError("invalid task contract:\n- " + "\n- ".join(errors))
+            assessment = assess_tle(args.workspace, task, args.ssh_bin)
+            print(json.dumps(assessment, indent=2))
+            required = (task.get("analysis") or {}).get("extensions", {}).get("tle") == "required"
+            return 2 if required and assessment.get("status") != "available" else 0
         if args.command == "remote":
             errors = validate_task(args.workspace, task)
             if errors:
@@ -1183,9 +1590,27 @@ def main(argv: list[str] | None = None) -> int:
             elif args.action == "pull":
                 hashes = pull_allowed(args.workspace, task, args.ssh_bin)
                 print(json.dumps({"pulled": sorted(hashes)}, indent=2))
-            else:
+            elif args.action == "push":
                 changed = push_allowed(args.workspace, task, args.ssh_bin)
                 print(json.dumps({"pushed": changed}, indent=2))
+            elif args.action == "list-wiki":
+                print(json.dumps({"files": list_tle_wiki(task, args.ssh_bin)}, indent=2))
+            else:
+                if not args.path:
+                    raise ContractError("remote read-wiki requires --path")
+                print(read_tle_wiki(task, args.path, args.ssh_bin), end="")
+            return 0
+        if args.command == "checkpoint":
+            errors = validate_task(args.workspace, task)
+            if errors:
+                raise ContractError("invalid task contract:\n- " + "\n- ".join(errors))
+            if args.action == "save-best":
+                if not args.candidate:
+                    raise ContractError("checkpoint save-best requires --candidate")
+                result = save_checkpoint(args.workspace, task, "best", args.candidate)
+            else:
+                result = restore_checkpoint(args.workspace, task, "best")
+            print(json.dumps(result, indent=2))
             return 0
         if args.command == "validate":
             errors = validate_task(args.workspace, task)

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KDA TLE assessment",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "version",
+    "generated_at",
+    "environment_fingerprint",
+    "policy",
+    "wiki_path",
+    "wiki_available",
+    "api_probe_configured",
+    "api_available",
+    "status"
+  ],
+  "properties": {
+    "version": {"const": 1},
+    "generated_at": {"type": "string"},
+    "environment_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "policy": {"enum": ["disabled", "auto", "required"]},
+    "wiki_path": {"type": "string"},
+    "wiki_available": {"type": "boolean"},
+    "api_probe_configured": {"type": "boolean"},
+    "api_available": {"type": "boolean"},
+    "status": {"enum": ["disabled", "unavailable", "available"]},
+    "reason": {"type": "string"}
+  }
+}

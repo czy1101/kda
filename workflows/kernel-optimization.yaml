@@ -9,6 +9,7 @@
 # Contract: ../schemas/task.schema.yaml, instantiated at .kernelpilot/task.yaml
 # Candidate record: ../schemas/candidate.schema.json
 # Tool discovery evidence: ../schemas/analysis-capabilities.schema.json
+# TLE assessment evidence: ../schemas/tle-assessment.schema.json
 
 name: kernel-optimization
 version: 1
@@ -42,7 +43,7 @@ stages:
     next: select_backend
 
   - id: select_backend
-    action: load_backend_profile_and_stage_skills
+    action: load_explicit_or_unique_matching_backend_profile_and_stage_skills
     next: prepare_execution
 
   - id: prepare_execution
@@ -71,12 +72,13 @@ stages:
   - id: validate_tle
     action: verify_tle_wiki_and_api_in_task_environment
     on_available: inspect
-    on_wiki_missing: inspect
-    on_api_unavailable: inspect
-    on_error: inspect
+    on_disabled: inspect
+    on_optional_unavailable: inspect
+    on_required_unavailable: finalize_without_target
+    on_error: workflow_error
 
   - id: inspect
-    action: inspect_kernel
+    action: inspect_kernel_and_write_draft_and_plan
     next: correctness
 
   - id: correctness
@@ -85,7 +87,7 @@ stages:
     on_fail: finalize_without_target
 
   - id: baseline
-    action: run_baseline
+    action: run_configured_baseline_or_use_benchmark_provided_baseline_and_record
     next: benchmark
 
   - id: benchmark
@@ -174,7 +176,9 @@ stages:
   # assessment confirms both the project Wiki and API are available.
   - id: optimize_with_extension
     action: implement_candidate_with_selected_extension
-    next: deploy_candidate
+    on_candidate_ready: deploy_candidate
+    on_optional_extension_failure: optimize
+    on_required_extension_failure: finalize_without_target
 
   - id: optimize
     action: implement_candidate
@@ -208,12 +212,13 @@ stages:
     on_fail: reject_candidate
 
   - id: keep_candidate
-    action: record_candidate
+    action: record_candidate_and_save_best_checkpoint
     next: evaluate
 
   - id: reject_candidate
     action: record_rejected_candidate_with_reason
-    next: restore_best
+    on_continue: restore_best
+    on_required_extension_failure: finalize_without_target
 
   - id: restore_best
     action: restore_best_correct_candidate

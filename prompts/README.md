@@ -23,8 +23,9 @@ The templates are intentionally task-agnostic. Fill in the task objective, const
    start from `optimize-kernel.md`; it reads the task contract and delegates the
    method to `AGENTS.md`, `workflows/kernel-optimization.yaml`, and the Skills.
 4. Ask the agent to read the workspace and write `docs/draft.md`.
-5. Convert that draft into an executable plan.
-6. Run the implementation loop with validation after each meaningful change.
+5. For a full run, let `optimize-kernel.md` and the workflow produce and execute
+   the plan; use the narrower prompts only for a deliberately separate analysis,
+   profiling, or final-review session.
 
 The prompts stay thin on purpose: they trigger a task. The method lives in the
 workflow and the Skills, and the task-specific facts live in `.kernelpilot/task.yaml`.

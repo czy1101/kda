@@ -23,20 +23,40 @@
       "items": {"type": "string"},
       "description": "Concrete edits, for example \"BLOCK_N 64 -> 128\"."
     },
+    "metric": {
+      "type": ["string", "null"],
+      "description": "Name of the measured target metric, such as latency or throughput."
+    },
+    "direction": {
+      "enum": ["minimize", "maximize", null],
+      "description": "Whether a smaller or larger metric value is better."
+    },
+    "metric_value": {
+      "type": ["number", "null"],
+      "description": "Measured target metric for this candidate."
+    },
+    "baseline_value": {
+      "type": ["number", "null"],
+      "description": "Measured value of the configured comparator."
+    },
+    "unit": {
+      "type": ["string", "null"],
+      "description": "Unit shared by metric_value and baseline_value."
+    },
     "correctness": {
       "enum": ["pass", "fail", "not_run"]
     },
     "latency_us": {
       "type": ["number", "null"],
-      "description": "Measured value of the target metric for this candidate."
+      "description": "Legacy latency-only field. New records should use metric_value."
     },
     "baseline_us": {
       "type": ["number", "null"],
-      "description": "Measured baseline value the candidate is compared against."
+      "description": "Legacy latency-only field. New records should use baseline_value."
     },
     "speedup": {
       "type": ["number", "null"],
-      "description": "baseline_us / latency_us."
+      "description": "Improvement factor: baseline/candidate for minimized metrics, candidate/baseline for maximized metrics."
     },
     "profile_evidence": {
       "type": ["string", "null"],

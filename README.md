@@ -78,27 +78,23 @@ Install the skills for Codex:
 mkdir -p ~/.codex/skills
 ln -sfn "$(pwd)/skills/KernelWiki"       ~/.codex/skills/KernelWiki
 ln -sfn "$(pwd)/skills/ncu-report-skill" ~/.codex/skills/ncu-report-skill
+ln -sfn "$(pwd)/skills/backend-profiler-discovery" ~/.codex/skills/backend-profiler-discovery
+ln -sfn "$(pwd)/skills/triton-cuda-optimization" ~/.codex/skills/triton-cuda-optimization
+ln -sfn "$(pwd)/skills/nvidia-profile-comparison" ~/.codex/skills/nvidia-profile-comparison
+ln -sfn "$(pwd)/skills/tle-optimization" ~/.codex/skills/tle-optimization
 ```
 
 Skills are user-level: they become available to every Codex session, not only to
 sessions started in this repository. Verify inside a Codex session with
 `/skills`.
 
-Define the task in the operator repository, not here:
+Initialize the task in the operator repository, not here, then let KernelPilot
+construct the full Codex prompt with absolute KDA paths:
 
 ```bash
-mkdir -p <operator-repo>/.kernelpilot
-cp templates/task.yaml <operator-repo>/.kernelpilot/task.yaml
-```
-
-Then start Codex in the operator repository, give it `AGENTS.md` (see
-`templates/operator-workspace/AGENTS.md`), and prompt it with:
-
-```text
-Read AGENTS.md, workflows/kernel-optimization.yaml, and .kernelpilot/task.yaml.
-Optimize the kernel in this workspace until the configured target or a stop
-condition is reached. Follow the correctness, benchmark, profiling, and
-candidate-recording requirements.
+python3 <kda>/scripts/kernelpilot.py init <operator-repo>
+# Fill <operator-repo>/.kernelpilot/task.yaml, then:
+python3 <kda>/scripts/kernelpilot.py optimize --workspace <operator-repo>
 ```
 
 The repository now includes a deliberately small execution layer. It validates
@@ -113,6 +109,10 @@ python3 <kda>/scripts/kernelpilot.py validate --workspace <operator-repo>
 
 # Run a contracted command with the exact environment setup.
 python3 <kda>/scripts/kernelpilot.py run correctness --workspace <operator-repo>
+
+# Discover backend tools and inspect the selected analysis route.
+python3 <kda>/scripts/kernelpilot.py discover-tools --workspace <operator-repo>
+python3 <kda>/scripts/kernelpilot.py strategy       --workspace <operator-repo>
 
 # Inspect the Codex invocation without running it.
 python3 <kda>/scripts/kernelpilot.py optimize --workspace <operator-repo> --dry-run
@@ -136,6 +136,8 @@ python3 <kda>/scripts/kernelpilot.py remote pull    --workspace <control-workspa
 python3 <kda>/scripts/kernelpilot.py remote push    --workspace <control-workspace>
 python3 <kda>/scripts/kernelpilot.py run correctness --workspace <control-workspace>
 python3 <kda>/scripts/kernelpilot.py run benchmark   --workspace <control-workspace>
+# When TLE is enabled, inspect its Wiki through the read-only adapter.
+python3 <kda>/scripts/kernelpilot.py remote list-wiki --workspace <control-workspace>
 ```
 
 The adapter is the normal execution boundary, not a substitute for operating
@@ -191,8 +193,11 @@ task-workspace/
   runs/
   outputs/
   profile/
-  benchmark.csv
-  candidates.jsonl
+  runs/
+    benchmark.csv
+    candidates.jsonl
+    workflow-state.json
+    stage-events.jsonl
 ```
 
 The exact files can change by domain. The important rule is that the agent records enough context for another engineer to understand what was tried, what passed validation, and why the final candidate was selected.

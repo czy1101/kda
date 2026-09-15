@@ -19,6 +19,7 @@ required:
   - implementation
   - correctness
   - benchmark
+  - baseline
   - goal
 properties:
 
@@ -55,7 +56,7 @@ properties:
       profile:
         type: string
         pattern: "^[a-z0-9][a-z0-9-]*$"
-        description: Backend profile id under backends/, for example "cuda-sm90".
+        description: Optional backend profile id. When omitted, exactly one matching profile is selected automatically; ambiguous matches require user selection.
       language:
         type: string
         description: Kernel language or DSL, for example "triton", "cuda", or "tilelang".
@@ -188,6 +189,7 @@ properties:
   baseline:
     type: object
     additionalProperties: false
+    required: [name]
     properties:
       name:
         type: string
@@ -300,6 +302,13 @@ properties:
     type: object
     additionalProperties: false
     required: [metric]
+    oneOf:
+      - required: [relative_to_baseline]
+        not:
+          required: [target_value]
+      - required: [target_value]
+        not:
+          required: [relative_to_baseline]
     properties:
       metric:
         type: string
@@ -316,7 +325,9 @@ properties:
         description: >
           How required shapes are combined for promotion. `all` requires every
           shape to satisfy the relative target; `any` requires at least one
-          shape to satisfy it. The task chooses this policy explicitly.
+          shape to satisfy it. For an absolute target, sum/mean/geomean ratio
+          modes aggregate raw metric values with the corresponding operation.
+          The task chooses this policy explicitly.
       max_regression:
         type: number
         minimum: 0

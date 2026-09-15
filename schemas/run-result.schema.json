@@ -46,6 +46,13 @@
         }
       }
     },
+    "restored_candidate": {
+      "type": ["string", "null"],
+      "description": "Candidate stored in the best checkpoint and restored by KernelPilot."
+    },
+    "rollback_status": {
+      "enum": ["restored_best", "not_needed", "failed", null]
+    },
     "remaining_bottlenecks": {
       "type": "array",
       "items": {"type": "string"}

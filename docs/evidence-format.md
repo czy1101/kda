@@ -38,6 +38,16 @@ aggregation policy may be `sum_ratio`, `mean_ratio`, `geomean_ratio`, `all`, or
 unsafe probes as well as kept candidates. Every rejected or revised candidate
 must include a non-empty reason and rollback result. Use
 `generalization_evidence` when a candidate introduces shape-dependent behavior.
+New records use `metric`, `direction`, `metric_value`, `baseline_value`, and
+`unit`; legacy latency-only fields remain accepted for older ledgers.
+
+## Checkpoints
+
+KernelPilot stores baseline and best snapshots under
+`.kernelpilot/checkpoints/`. Only a correct candidate that has passed the
+configured benchmark and generalization decision may replace the best
+checkpoint. KernelPilot restores best when the Codex process exits and rejects
+a final result whose reported best candidate does not match that checkpoint.
 
 ## Structured final result
 

@@ -90,6 +90,11 @@ python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
 
 ## Selection rule
 
+When `target.profile` is omitted, KernelPilot selects a profile only if exactly
+one profile matches the declared target. Multiple matches require explicit user
+selection; no match keeps the generic benchmark/source workflow without loading
+vendor-specific Skills.
+
 Load `skills.always` before diagnosis. Load `when_discovering` only while
 interpreting tool discovery and selection. Load `when_profiling` only when the task
 has a valid profile command and profiling is justified. Load

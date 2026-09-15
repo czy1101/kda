@@ -1,172 +1,112 @@
 # Kernel Optimization Task
 
-Read `.kernelpilot/task.yaml`.
+Read, in order, the task workspace `AGENTS.md`, `.kernelpilot/task.yaml`, the
+KDA workflow at `workflows/kernel-optimization.yaml`, the selected backend
+profile, and only the Skills routed for the current stage.
 
-If `target.profile` is set, read `backends/<target.profile>.yaml` and load only
-the skills routed for the current stage. If `execution.transport` is `ssh`, use
-the KernelPilot remote pull/push commands; never open an unrestricted remote
-shell from the optimization session.
+Treat the workflow as the intended execution contract for one complete run.
+Use its declared transition for each observed stage result. If a transition,
+action, tool, or required artifact cannot be completed, record the deviation
+and recovery in `runs/stage-events.jsonl` and the final report.
 
-Follow the repository `AGENTS.md` and the KDA optimization workflow
-(`workflows/kernel-optimization.yaml`).
+## Execution and safety
 
-Requirements:
+- Use KernelPilot wrappers for environment preflight, tool discovery, baseline,
+  correctness, benchmark, profiling, checkpoint, and remote operations.
+- For SSH tasks, never invoke `ssh`, `scp`, `rsync`, or an unrestricted remote
+  shell. Edit only the controlled local mirror and synchronize only
+  `constraints.allowed_paths` through KernelPilot.
+- Preserve the baseline checkpoint before editing. Save a new best checkpoint
+  only after correctness, performance comparison, and any configured
+  generalization checks pass. Restore the best after every rejected candidate.
+- Do not modify the task comparator, reference, tests, benchmark, or forbidden
+  paths after measurement begins.
+- Never fabricate measurements, hide failures, or force an optimization when
+  evidence does not support one. Do not hard-code benchmark shapes, expected
+  values, or public test cases. Shape-dependent logic needs task authorization,
+  an algorithmic reason, and configured generalization evidence.
 
-- Establish correctness first.
-- Measure the existing implementation before editing.
-- Use profiling evidence when the next optimization is not obvious.
-- Make one coherent optimization hypothesis per candidate.
-- Run correctness after each implementation change.
-- Benchmark only correct candidates.
-- Record all candidate results, including rejected and regressed ones.
-- Continue until the configured target or stop condition is reached.
-- Preserve the best correct candidate locally so a failed remote candidate can
-  be rolled back through the same controlled adapter.
+## Candidate loop
 
-At completion, report:
+1. Inspect the operator and reference, then write `docs/draft.md` and
+   `docs/plan.md` before implementation.
+2. Establish correctness and the configured original/reference baseline, and
+   record the baseline candidate before evaluating optimized candidates.
+3. Diagnose the current bottleneck from source and measurements. Profile only
+   when it can distinguish concrete competing hypotheses.
+4. State one falsifiable hypothesis and implement one coherent candidate.
+5. Run correctness. Benchmark only correct candidates across the full required
+   shape set, then run configured generalization checks.
+6. Record every kept, revised, rejected, failed, or regressed candidate with a
+   reason and rollback result. Save the checkpoint for a correct improved
+   candidate, then evaluate the configured goal from raw benchmark records.
+7. Continue until the target or a configured evidence-backed stop condition is
+   reached. A truthful target-not-reached result is acceptable.
 
-- best candidate
-- baseline latency
-- optimized latency
-- speedup
-- correctness status
-- main optimizations
-- remaining bottlenecks
+The task's metric and direction are authoritative. Do not assume the metric is
+latency: minimized and maximized metrics use the same evidence gates. Exactly
+one of `goal.relative_to_baseline` and `goal.target_value` defines success, and
+`goal.aggregation` plus `goal.max_regression` controls multi-shape promotion.
 
-## Complete-workflow execution discipline
+## Backend and performance analysis
 
-Execute one complete KDA kernel-optimization run. Read the task workspace
-`AGENTS.md`, `.kernelpilot/task.yaml`, the KDA workflow, the selected backend
-profile, and only the skills routed for the current stage.
+If `target.profile` is present, validate and use it. Otherwise use the unique
+backend profile matching the declared backend/device/architecture/language. Do
+not guess when multiple profiles match; continue without vendor-specific
+guidance when none matches.
 
-Treat `kernel-optimization.yaml` as the execution contract for this run, not as
-optional background material. Start at its initial stage and use the declared
-transition for each stage result.
+Run backend tool discovery in the exact task environment. A backend declaration
+is a probe allowlist, not proof that a tool is installed or usable. Select only
+tools whose live probe succeeded, and preserve their versions and failures in
+`runs/analysis-capabilities.json`.
 
-- During `discover_analysis_tools`, run KernelPilot `discover-tools` in the
-  exact task environment before selecting a profiler. For SSH tasks this must
-  go through the controlled adapter; do not probe the controller machine and
-  assume the remote host has the same tools.
-- Before each stage, write the current stage and status to
-  `runs/workflow-state.json`.
-- After each stage, append its action, result, evidence, and selected next stage
-  to `runs/stage-events.jsonl`.
-- Do not advance when the current stage's required evidence is missing or
-  invalid.
-- Use KernelPilot for every action implemented by the runner; do not replace a
-  runner result with a narrative judgment.
-- For SSH execution, use only the controlled remote pull/push and contracted
-  run commands. Never invoke `ssh`, `scp`, `rsync`, or an unrestricted remote
-  shell directly.
-- Modify only `constraints.allowed_paths` and preserve a recoverable baseline.
-- Treat `baseline.name` and `baseline.command` as the fixed performance
-  comparator for this run; do not change the comparator after measurements
-  begin.
-- Restore the best correct candidate after a failed or rejected remote
-  candidate.
-- Record a concrete, evidence-backed reason for every failed, revised, or
-  rejected candidate.
-- Continue until the configured target, a configured stop condition, or the
-  workflow terminal stage is reached.
-- Treat a truthful target-not-reached result as acceptable. Never fabricate
-  measurements, conceal failures, or force a change when evidence does not
-  support a safe optimization.
-- Do not hard-code benchmark shapes, expected values, or exact public cases.
-  Shape-dependent logic requires an algorithmic reason, task authorization,
-  and configured generalization evidence.
-- Record every workflow error, failed stage, exception, retry, interruption,
-  recovery, stop condition, and early exit in `runs/stage-events.jsonl`, even
-  when the run later recovers successfully.
+- Use kernel counters for execution-pipeline or memory questions, timelines for
+  launch/synchronization/host gaps, framework tools for operator attribution,
+  and compiler artifacts for lowering or generated-code questions.
+- A successful executable probe establishes visibility only. Record capture,
+  permission, export, or parsing failures and try another compatible discovered
+  capability or the benchmark/source/compiler fallback.
+- Analyze structured exports rather than treating opaque binary reports as
+  model-readable evidence. Candidate/reference captures must use comparable
+  inputs, shapes, device conditions, warmup, and capture policy.
+- Use routed profiling Skills first. If they are missing or inconclusive and
+  `ai_profile_fallback` is enabled, analyze attributable structured artifacts
+  directly and record the fallback and confidence.
+- Never install, upgrade, reconfigure, or elevate permissions for a profiler
+  unless the task separately authorizes that system change.
 
-Before writing the final report, verify that all required stage evidence
-exists, correctness passed for the selected best candidate, the performance
-decision was recomputed from raw benchmark records, the remote implementation
-is the selected best candidate, the baseline remains recoverable, and the
-workflow state records the terminal outcome. Also report the reason the
-workflow stopped.
+## TLE
 
-The final report must contain a `Workflow execution record` section. List all
-workflow errors and exits in execution order, including the affected stage,
-error or exit category, observed message, recovery action, recovery result, and
-whether any required evidence remains incomplete. Do not omit recovered errors.
+`analysis.extensions.tle` defaults to `disabled`.
 
-When the target is not reached, the final report must identify the best correct
-candidate, confirm that it is deployed (or that the baseline was restored),
-quantify the remaining gap, and give an evidence-backed stop reason. Valid stop
-reasons include reference parity, no actionable bottleneck, exhausted backend
-capabilities, candidate or profiling budget exhaustion, and correctness or
-workflow blockers.
+- `disabled`: do not inspect `tle-wiki`, probe the API, load the TLE Skill, or
+  implement with TLE.
+- `auto`: assess the configured project `tle-wiki` and task-declared read-only
+  API probe. If either is unavailable, record the reason and continue without
+  TLE.
+- `required`: if the Wiki/API assessment fails, the necessary primitive is
+  absent, or TLE execution cannot produce a correct candidate, stop and restore
+  the best correct checkpoint rather than silently downgrading the requirement.
 
-Use `templates/final-report.md` as the minimum final-report structure.
+For remote tasks, list and read Wiki files only through KernelPilot's controlled
+read-only Wiki commands. Treat that project's Wiki as the authority for the
+installed version and API; do not infer interfaces from another TLE version or
+from a conda environment name. Use only documented primitives. Record TLE API,
+compilation, lowering, runtime, correctness, and performance errors. If a
+measured bottleneck needs an operation that neither Triton nor the available
+TLE API can express, report the concrete missing primitive and required
+semantics instead of inventing an interface.
 
-## Capability-driven analysis
+## Evidence and completion
 
-When diagnosis is inconclusive, select an analysis path from the task's
-`analysis` policy and the selected backend profile's declared capabilities.
-Do not assume that NVIDIA-specific tools or artifacts exist on another vendor's
-backend.
+Before each stage, update `runs/workflow-state.json`. After each stage, append
+the action, result, evidence, and selected transition to
+`runs/stage-events.jsonl`. Keep the candidate and benchmark ledgers consistent
+with their schemas.
 
-- Treat a backend profile as an allowlist of tools worth probing, not proof
-  that they are installed. Preserve `runs/analysis-capabilities.json`, choose
-  only tools whose live probe succeeded, and record their reported versions.
-- Never install, upgrade, or reconfigure a profiler during an optimization run
-  unless the task separately authorizes that system change. A missing or
-  unusable optional tool must fall back to another discovered tool or to
-  benchmark/compiler/source analysis.
-- Match the tool to the question: prefer kernel-counter tools for execution
-  bottlenecks, timeline tools for launch/synchronization gaps, framework tools
-  for operator attribution, and compiler artifacts for generated-code issues.
-  Availability alone is not a reason to run every tool.
-- A successful executable probe establishes visibility only. If capture,
-  permissions, export, or report parsing later fails, record that failure and
-  reselect from the remaining discovered capabilities.
-- When NCU and only a candidate profile are available, export the report to
-  structured text or CSV before analysis.
-- When a comparable reference is configured, collect candidate and reference
-  reports with the same inputs, shapes, device conditions, warmup, and capture
-  method. Compare end-to-end behavior as well as aligned kernels.
-- Include available compiler and low-level artifacts such as Triton IR, PTX,
-  and final machine instructions when they can distinguish competing
-  bottleneck explanations.
-- First use the profiling skills routed by the backend profile. If a required
-  skill is missing, incompatible, or inconclusive and `ai_profile_fallback` is
-  enabled, analyze the structured report artifacts directly and record the
-  fallback reason and confidence.
-- Treat an opaque binary profiler report as an artifact to preserve, not as
-  sufficient model-readable evidence.
-- Use optional optimization extensions only when the backend profile marks
-  them available and their maintained skill or integration contract exists.
-  Otherwise continue with the standard optimization path and record why the
-  extension was not used.
-- On a non-NVIDIA or limited-tool backend, use the profiler, IR, compiler, and
-  benchmark evidence declared by that backend profile. Preserve all common
-  correctness, candidate, evaluation, and rollback gates.
-
-## TLE scope and use
-
-TLE does not participate by default. At the beginning of the run, read
-`analysis.extensions.tle` and record the decision in
-`runs/tle-assessment.json`.
-
-- When the policy is `disabled`, do not search for `tle-wiki`, probe a TLE API,
-  load the TLE skill, or implement with TLE.
-- When the policy is `auto` or `required`, first verify that the configured
-  project-relative `extension_config.tle.wiki_path` directory exists in the
-  operator project. Then read that Wiki to identify the installed API and run
-  the documented read-only API probe through the contracted task environment.
-  Do not guess a package name, primitive, or API from unrelated TLE versions.
-- Mark TLE usable only when both the project Wiki and API probe succeed. Record
-  the Wiki path, probe command, observed version/output, failure reason, and
-  whether the TLE optimization skill was loaded.
-- Use only primitives documented by the task's TLE Wiki. Every TLE candidate
-  remains subject to the same correctness, benchmark, generalization, failure,
-  and rollback gates as an ordinary candidate.
-- Record every TLE compilation, API, runtime, correctness, and unsupported-
-  primitive error. If diagnosis identifies a useful operation that Triton
-  cannot express and the available TLE API has no matching primitive, do not
-  invent an interface. Continue with a safe fallback when possible and add a
-  concrete TLE API/primitive requirement to the final report.
-- `auto` may skip TLE and continue. If `required` cannot pass its Wiki/API
-  checks or lacks the necessary primitive, record the blocker and follow the
-  workflow's configured failure/stop handling rather than silently downgrading
-  the requirement.
+Finish with `docs/final-report.md` using `templates/final-report.md`, and return
+the structured result required by `schemas/run-result.schema.json`. The report
+must identify the restored/deployed best correct candidate, comparator, metric,
+per-shape and aggregate result, correctness, generalization evidence, remaining
+gap, stop reason, rejected candidates, unavailable capabilities, TLE assessment,
+and every workflow error or recovery in execution order.

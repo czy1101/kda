@@ -27,3 +27,9 @@ Use a safe non-TLE fallback when available; otherwise preserve the best correct
 implementation and add a concrete missing-API request to the final report,
 including the bottleneck evidence and the semantics the new primitive would
 need.
+
+When the task policy is `required`, a missing Wiki/API, undocumented required
+primitive, or failed TLE implementation is a terminal blocker for that run.
+Restore the best correct checkpoint and report it; do not silently continue as
+a Triton-only optimization. Under `auto`, record the same evidence and continue
+through the ordinary optimization route.

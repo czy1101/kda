@@ -30,6 +30,9 @@ MLSys-style benchmark work is one possible application of this loop. The same fl
 For SSH tasks, materialize allow-listed source into `remote-worktree/` before
 inspection, deploy a candidate through the adapter before correctness, and use
 the recorded remote hash to reject concurrent or out-of-band overwrites.
+KernelPilot snapshots the initial allowed source and the current approved best;
+the best checkpoint is restored on normal completion, failure, or an interrupt
+that reaches the runner's cleanup path.
 
 ## Task Contract
 

@@ -82,6 +82,12 @@ diagnosed bottleneck needs an operation neither Triton nor the available TLE
 API can express, report the specific missing primitive as an extension request
 instead of inventing an API.
 
+For SSH tasks, use `kernelpilot remote list-wiki` and `remote read-wiki --path`
+to read the configured Wiki directly through the controlled adapter. These
+operations cannot write Wiki content and reject paths outside the configured
+root. An `auto` assessment may fall back; a failed `required` assessment stops
+the run and restores the best checkpoint.
+
 ## Inspection command
 
 After filling the task contract, inspect the deterministic route with:

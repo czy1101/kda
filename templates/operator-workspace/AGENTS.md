@@ -16,6 +16,9 @@ Run contracted correctness, benchmark, and profile commands through
 `scripts/kernelpilot.py run` when that runner is available. It applies the
 contract's `environment.setup` first, so conda activation, library paths, and
 device selection are reproduced instead of merely selecting a Python binary.
+Use the same runner for an optional separate baseline command. Save a correct,
+improved candidate with `checkpoint save-best`; KernelPilot restores that
+checkpoint when the optimization process exits.
 
 When `execution.transport` is `ssh`, Codex remains on the controller. Never
 invoke `ssh`, `scp`, or `rsync` directly. Use `kernelpilot.py remote pull` to
@@ -26,6 +29,10 @@ still go through `kernelpilot.py run`.
 
 When `target.profile` is set, read the matching file under KDA `backends/` and
 load only the skills routed for the current stage.
+
+If `target.profile` is omitted, use the unique matching backend profile. Do not
+guess when several profiles match; continue without vendor-specific guidance
+when none matches.
 
 Before selecting a performance-analysis tool, run KernelPilot `discover-tools`
 in the contracted environment and preserve `runs/analysis-capabilities.json`.

@@ -56,6 +56,16 @@ def _allowed_paths(task: dict[str, Any]) -> list[str]:
     return [_relative_path(value) for value in values]
 
 
+def _tle_wiki_root(task: dict[str, Any]) -> str:
+    policy = (task.get("analysis") or {}).get("extensions", {}).get("tle", "disabled")
+    if policy == "disabled":
+        raise SSHAdapterError("TLE is disabled for this task")
+    configured = (task.get("extension_config") or {}).get("tle", {}).get(
+        "wiki_path", "tle-wiki"
+    )
+    return _relative_path(configured)
+
+
 def command_script(task: dict[str, Any], command: str) -> tuple[str, str]:
     execution = _execution(task)
     environment = task.get("environment") or {}
@@ -258,3 +268,57 @@ def inspect_remote(task: dict[str, Any], ssh_bin: str = "ssh") -> dict[str, Any]
         if expected and expected not in completed.stdout:
             raise SSHAdapterError(f"remote preflight output does not contain {expected!r}")
     return result
+
+
+def list_tle_wiki(task: dict[str, Any], ssh_bin: str = "ssh") -> list[str]:
+    """List regular files under the configured remote TLE Wiki without copying it."""
+    adapter = ControlledSSH(task, ssh_bin=ssh_bin)
+    root = _tle_wiki_root(task)
+    workspace = shlex.quote(adapter.execution["workspace"])
+    quoted_root = shlex.quote(root)
+    script = (
+        "set -euo pipefail\n"
+        f"cd -- {workspace}\n"
+        f"test -d -- {quoted_root}\n"
+        f"find -P -- {quoted_root} -type f -print"
+    )
+    result = adapter.run_script(script, capture=True)
+    if result.returncode != 0:
+        raise SSHAdapterError(
+            f"cannot list remote TLE Wiki {root}: {(result.stderr or '').strip()}"
+        )
+    prefix = f"{root}/"
+    files: list[str] = []
+    for line in result.stdout.splitlines():
+        value = line.strip()
+        if value.startswith(prefix):
+            files.append(value[len(prefix) :])
+    return sorted(files)
+
+
+def read_tle_wiki(task: dict[str, Any], relative: str, ssh_bin: str = "ssh") -> str:
+    """Read one regular file whose resolved path remains inside the remote TLE Wiki."""
+    adapter = ControlledSSH(task, ssh_bin=ssh_bin)
+    root = _tle_wiki_root(task)
+    child = _relative_path(relative)
+    target = (PurePosixPath(root) / child).as_posix()
+    workspace = shlex.quote(adapter.execution["workspace"])
+    quoted_root = shlex.quote(root)
+    quoted_target = shlex.quote(target)
+    script = "\n".join(
+        (
+            "set -euo pipefail",
+            f"cd -- {workspace}",
+            f"root_real=$(realpath -- {quoted_root})",
+            f"target_real=$(realpath -- {quoted_target})",
+            'case "$target_real" in "$root_real"/*) ;; *) exit 13 ;; esac',
+            'test -f -- "$target_real"',
+            'cat -- "$target_real"',
+        )
+    )
+    result = adapter.run_script(script, capture=True)
+    if result.returncode != 0:
+        raise SSHAdapterError(
+            f"cannot read remote TLE Wiki file {relative}: {(result.stderr or '').strip()}"
+        )
+    return result.stdout

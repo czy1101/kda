@@ -7,10 +7,12 @@
 - Stop reason:
 - Best correct candidate:
 - Deployed or restored revision:
+- Best-checkpoint restore result:
 
 ## Performance
 
 - Comparator:
+- Metric, direction, and unit:
 - Required-shape results:
 - Aggregate result:
 - Remaining gap:

@@ -24,6 +24,10 @@ This repository defines a reusable workflow for GPU kernel optimization.
 13. Treat backend analysis-tool declarations as a probe allowlist, not proof of
     installation. Select profiling only from current task-environment discovery
     evidence; do not install or reconfigure tools during the run.
+14. Save only correctness- and benchmark-approved candidates as the best
+    checkpoint. KernelPilot restores that checkpoint when the run exits.
+15. Keep metric handling generic: the task's metric, direction, unit, comparator,
+    aggregation, and target mode define promotion.
 
 ## Optimization loop
 

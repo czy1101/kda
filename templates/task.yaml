@@ -21,7 +21,7 @@ target:
   backend: <cuda|gcu|ascend|kunlun>
   device: <H100|B200|gcu300|...>
   arch: <sm90|sm100|...>
-  profile: <backend-profile-id>     # e.g. cuda-sm90
+  profile: <backend-profile-id>     # optional; omit for unique automatic match
   language: <triton|cuda|tilelang|...>
 
 # Codex remains on the controller. For a GPU server that cannot run Codex,
@@ -76,7 +76,7 @@ generalization:
 # when it is judged against a separate high-performance implementation.
 baseline:
   name: <original|reference|other-comparator-name>
-  command: <command that measures the selected comparator>
+  # command: <optional separate comparator command; benchmark may emit baseline_value>
 
 # Optional. `tool: auto` selects only a profiler that is both declared by the
 # backend profile and detected in this exact environment. Per-tool commands

@@ -25,6 +25,7 @@ def valid_task():
         "implementation": {"path": "kernel.py"},
         "correctness": {"command": "true"},
         "benchmark": {"command": "true"},
+        "baseline": {"name": "original"},
         "goal": {
             "metric": "latency",
             "direction": "minimize",
@@ -235,7 +236,7 @@ class KernelPilotTests(unittest.TestCase):
         self.assertEqual(strategy["low_level_artifacts"], ["triton-ir", "ptx", "sass"])
         self.assertTrue(strategy["ai_profile_fallback"])
         self.assertEqual(strategy["active_extensions"], [])
-        self.assertIn("tle", strategy["skipped_extensions"])
+        self.assertIn("tle", strategy["pending_extensions"])
 
     def test_cuda_backend_profile_and_discovery_skills_validate(self):
         task = valid_task()
@@ -253,6 +254,19 @@ class KernelPilotTests(unittest.TestCase):
         task["analysis"] = {"profiling": "disabled"}
         strategy = kernelpilot.select_analysis_strategy(task)
         self.assertEqual(strategy["route"], "benchmark_only")
+
+    def test_unique_backend_profile_is_selected_when_omitted(self):
+        profile = kernelpilot._backend_profile(valid_task())
+        self.assertEqual(profile["id"], "cuda-sm90")
+
+    def test_ambiguous_backend_profile_is_not_guessed(self):
+        with patch.object(
+            kernelpilot,
+            "_matching_backend_profiles",
+            return_value=[{"id": "a"}, {"id": "b"}],
+        ):
+            with self.assertRaises(kernelpilot.ContractError):
+                kernelpilot._backend_profile(valid_task())
 
     def test_analysis_strategy_requires_live_discovery_before_auto_profile(self):
         task = valid_task()
@@ -306,6 +320,96 @@ class KernelPilotTests(unittest.TestCase):
             changed_task["environment"] = {"setup": "export DIFFERENT_ENV=1"}
             with self.assertRaises(kernelpilot.ContractError):
                 kernelpilot.load_analysis_capabilities(workspace, changed_task)
+
+    def test_absolute_target_is_evaluated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            runs = workspace / "runs"
+            runs.mkdir()
+            task = valid_task()
+            task["goal"].pop("relative_to_baseline")
+            task["goal"]["target_value"] = 9.0
+            task["goal"]["aggregation"] = "all"
+            task["benchmark"]["shapes"] = ["a", "b"]
+            with (runs / "benchmark.csv").open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=("candidate", "shape", "metric_value", "baseline_value", "unit", "status"),
+                )
+                writer.writeheader()
+                writer.writerow({"candidate": "c1", "shape": "a", "metric_value": 8, "baseline_value": 10, "unit": "ms", "status": "pass"})
+                writer.writerow({"candidate": "c1", "shape": "b", "metric_value": 9, "baseline_value": 10, "unit": "ms", "status": "pass"})
+            evaluation, errors = kernelpilot.evaluate_goal(workspace, task, "c1")
+            self.assertEqual(errors, [])
+            self.assertTrue(evaluation["target_reached"])
+
+    def test_remote_profile_uses_selected_reference_command(self):
+        task = valid_task()
+        task["execution"] = {"transport": "ssh", "host": "gpu", "workspace": "/srv/op"}
+        task["profile"] = {
+            "tool": "auto",
+            "tools": {"ncu": {"reference_command": "profile-reference"}},
+        }
+        completed = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(kernelpilot.ControlledSSH, "run_script", return_value=completed) as run:
+                kernelpilot.run_contract_command(
+                    Path(directory), task, "profile", tool="ncu", variant="reference"
+                )
+        self.assertIn("profile-reference", run.call_args.args[0])
+
+    def test_checkpoint_restores_best_local_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            kernel = workspace / "kernel.py"
+            kernel.write_text("baseline\n", encoding="utf-8")
+            task = valid_task()
+            kernelpilot.save_checkpoint(workspace, task, "baseline", "baseline")
+            kernel.write_text("best\n", encoding="utf-8")
+            kernelpilot.save_checkpoint(workspace, task, "best", "c1")
+            kernel.write_text("failed\n", encoding="utf-8")
+            restored = kernelpilot.restore_checkpoint(workspace, task)
+            self.assertEqual(restored["candidate"], "c1")
+            self.assertEqual(kernel.read_text(encoding="utf-8"), "best\n")
+
+    def test_required_tle_cannot_use_failed_assessment(self):
+        task = valid_task()
+        task["analysis"] = {"extensions": {"tle": "required"}}
+        with self.assertRaises(kernelpilot.ContractError):
+            kernelpilot.select_analysis_strategy(
+                task,
+                discovery={"status": "no_tool_available", "tools": []},
+                tle_assessment={"status": "unavailable", "reason": "wiki missing"},
+            )
+
+    def test_tle_assessment_requires_wiki_and_api(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "tle-wiki").mkdir()
+            (workspace / "tle-wiki/README.md").write_text("api\n", encoding="utf-8")
+            task = valid_task()
+            task["analysis"] = {"extensions": {"tle": "auto"}}
+            task["extension_config"] = {
+                "tle": {"wiki_path": "tle-wiki", "api_probe_command": "true"}
+            }
+            assessment = kernelpilot.assess_tle(workspace, task)
+            self.assertEqual(assessment["status"], "available")
+            self.assertTrue((workspace / "runs/tle-assessment.json").is_file())
+
+    def test_remote_tle_wiki_read_is_confined_to_configured_root(self):
+        task = valid_task()
+        task["execution"] = {"transport": "ssh", "host": "gpu", "workspace": "/srv/op"}
+        task["analysis"] = {"extensions": {"tle": "auto"}}
+        task["extension_config"] = {"tle": {"wiki_path": "tle-wiki"}}
+        listed = subprocess.CompletedProcess([], 0, "tle-wiki/README.md\n", "")
+        read = subprocess.CompletedProcess([], 0, "wiki body\n", "")
+        with patch.object(
+            kernelpilot.ControlledSSH, "run_script", side_effect=[listed, read]
+        ):
+            self.assertEqual(kernelpilot.list_tle_wiki(task), ["README.md"])
+            self.assertEqual(kernelpilot.read_tle_wiki(task, "README.md"), "wiki body\n")
+        with self.assertRaises(kernelpilot.SSHAdapterError):
+            kernelpilot.read_tle_wiki(task, "../secret")
 
     def test_workflow_transitions_reference_existing_stages(self):
         workflow_path = SCRIPT.parents[1] / "workflows/kernel-optimization.yaml"
