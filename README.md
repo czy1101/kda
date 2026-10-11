@@ -23,6 +23,11 @@ This repository documents an early research prototype and remains under active d
 | `schemas/run-result.schema.json` | Structured result returned by automated Codex runs. |
 | `schemas/backend.schema.yaml` | Contract for backend-to-skill routing profiles. |
 | `docs/evidence-format.md` | Canonical benchmark and candidate ledger format. |
+| `docs/evidence-driven-optimization.md` | Evidence components, adoption and limitations. |
+| `docs/source-bound-evidence.md` | Source-bound runs and best-checkpoint approval. |
+| `docs/measurement-reliability.md` | Raw samples, repeat measurements and interleaved confirmation. |
+| `docs/compiler-hypotheses.md` | Compiler captures and observable hypothesis assessment. |
+| `docs/metax-profiling.md` | Controlled MetaX counter and timeline collection. |
 | `docs/backend-extensions.md` | How to add a chip backend without growing prompts. |
 | `backends/` | Backend/architecture matching and stage-specific skill routing. |
 | `templates/task.yaml` | Fill-in task contract. |

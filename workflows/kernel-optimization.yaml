@@ -33,6 +33,10 @@ evidence:
   profile_analysis: profile/analysis.md
   profile_comparison: profile/comparison.md
   low_level_analysis: profile/low-level-analysis.md
+  compiler_captures: runs/compiler-evidence/
+  compiler_comparisons: runs/compiler-comparisons/
+  mechanism_hypotheses: runs/hypotheses/
+  mechanism_assessments: runs/hypothesis-assessments/
   extension_analysis: docs/extension-analysis.md
   tle_assessment: runs/tle-assessment.json
 
@@ -87,7 +91,7 @@ stages:
     on_fail: finalize_without_target
 
   - id: baseline
-    action: run_configured_baseline_or_use_benchmark_provided_baseline_and_record
+    action: freeze_repeated_initial_baseline_when_measurement_configured_otherwise_run_legacy_baseline
     next: benchmark
 
   - id: benchmark
@@ -103,7 +107,7 @@ stages:
   # selected only when existing evidence does not justify the next candidate.
   - id: diagnose
     action: diagnose_bottleneck
-    on_known_cause: select_optimization_strategy
+    on_known_cause: register_mechanism_hypothesis
     on_unknown_cause: select_analysis_strategy
     on_reference_parity: finalize_without_target
     on_no_actionable_bottleneck: finalize_without_target
@@ -153,8 +157,8 @@ stages:
 
   - id: analyze_low_level_artifacts
     action: compare_available_ir_ptx_and_machine_instructions
-    on_complete: select_optimization_strategy
-    on_unavailable: select_optimization_strategy
+    on_complete: register_mechanism_hypothesis
+    on_unavailable: register_mechanism_hypothesis
     on_no_actionable_bottleneck: finalize_without_target
     on_error: workflow_error
 
@@ -162,9 +166,19 @@ stages:
   # and use the evidence their backend profile declares as available.
   - id: benchmark_driven_analysis
     action: diagnose_from_source_benchmark_and_available_backend_evidence
-    on_known_cause: select_optimization_strategy
+    on_known_cause: register_mechanism_hypothesis
     on_no_actionable_bottleneck: finalize_without_target
     on_backend_capability_exhausted: finalize_without_target
+
+  # Required mode registers against an unchanged parent capture before edits.
+  # Optional legacy tasks retain their existing analysis path. Missing compiler
+  # evidence must be reported, not replaced with fabricated resource values.
+  - id: register_mechanism_hypothesis
+    action: capture_parent_and_register_falsifiable_hypothesis_when_configured
+    on_registered: select_optimization_strategy
+    on_not_configured: select_optimization_strategy
+    on_missing_evidence: select_analysis_strategy
+    on_fail: workflow_error
 
   - id: select_optimization_strategy
     action: select_available_optimization_extension_from_validated_assessment
@@ -191,18 +205,35 @@ stages:
 
   - id: correctness_candidate
     action: run_correctness
-    on_pass: benchmark_candidate
+    on_pass: assess_mechanism
+    on_fail: reject_candidate
+
+  # Assessment evaluates observable compiler predictions, not speedup. An
+  # unsupported or unknown prediction stays visible if tradeoff timing proceeds.
+  - id: assess_mechanism
+    action: capture_candidate_compare_and_assess_registered_predictions
+    on_assessed: benchmark_candidate
+    on_not_configured: benchmark_candidate
     on_fail: reject_candidate
 
   - id: benchmark_candidate
-    action: benchmark_candidate
+    action: benchmark_candidate_or_measure_repeats_when_configured
     next: compare_candidate
 
   - id: compare_candidate
     action: compare_to_best
-    on_improved: generalization_check
+    on_improved: confirm_measurement
     on_neutral: reject_candidate
     on_regressed: reject_candidate
+
+  # Optional strict measurement policy adds controller-driven repeat screening
+  # and best/candidate interleaving. Policy values remain task-defined.
+  - id: confirm_measurement
+    action: run_configured_interleaved_confirmation
+    on_pass: generalization_check
+    on_not_configured: generalization_check
+    on_inconclusive: reject_candidate
+    on_fail: reject_candidate
 
   - id: generalization_check
     action: validate_candidate_generalization

@@ -366,7 +366,7 @@ class KernelPilotTests(unittest.TestCase):
             task = valid_task()
             kernelpilot.save_checkpoint(workspace, task, "baseline", "baseline")
             kernel.write_text("best\n", encoding="utf-8")
-            kernelpilot.save_checkpoint(workspace, task, "best", "c1")
+            kernelpilot._write_checkpoint(workspace, task, "best", "c1")
             kernel.write_text("failed\n", encoding="utf-8")
             restored = kernelpilot.restore_checkpoint(workspace, task)
             self.assertEqual(restored["candidate"], "c1")

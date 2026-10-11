@@ -15,15 +15,51 @@
     "tools"
   ],
   "properties": {
-    "version": {"const": 1},
-    "generated_at": {"type": "string"},
-    "backend_profile": {"type": ["string", "null"]},
-    "transport": {"enum": ["local", "ssh"]},
-    "environment_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "policy": {"enum": ["auto", "disabled", "required"]},
-    "status": {"enum": ["complete", "no_tool_available", "disabled"]},
-    "selected": {"type": ["string", "null"]},
-    "disabled_reason": {"type": "string"},
+    "version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "backend_profile": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "transport": {
+      "enum": [
+        "local",
+        "ssh"
+      ]
+    },
+    "environment_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "policy": {
+      "enum": [
+        "auto",
+        "disabled",
+        "required"
+      ]
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "no_tool_available",
+        "disabled"
+      ]
+    },
+    "selected": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "disabled_reason": {
+      "type": "string"
+    },
     "tools": {
       "type": "array",
       "items": {
@@ -38,17 +74,41 @@
           "capabilities"
         ],
         "properties": {
-          "id": {"type": "string", "minLength": 1},
-          "kind": {"type": "string", "minLength": 1},
-          "priority": {"type": "integer"},
-          "available": {"type": "boolean"},
-          "probe_exit_code": {"type": "integer"},
-          "probe_error": {"type": "string"},
-          "version_exit_code": {"type": "integer"},
-          "version": {"type": "string"},
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "probe_exit_code": {
+            "type": "integer"
+          },
+          "probe_error": {
+            "type": "string"
+          },
+          "version_exit_code": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "string"
+          },
           "capabilities": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {
+              "type": "string"
+            }
+          },
+          "capability_status": {
+            "const": "declared_unverified",
+            "description": "Discovery alone does not validate capture or report contents; see bound profile records."
           }
         }
       }

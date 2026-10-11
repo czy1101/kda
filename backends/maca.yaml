@@ -1,0 +1,30 @@
+version: 1
+id: maca
+match:
+  backend: maca
+skills:
+  always: []
+  when_discovering: [skills/backend-profiler-discovery]
+  when_profiling: [skills/metax-profiling]
+analysis_tools:
+  - id: mcprofiler
+    kind: kernel-profiler
+    priority: 80
+    probe: '"${KDA_MCPROFILER_BIN:-mcProfiler}" --help >/dev/null'
+    version_command: '"${KDA_MCPROFILER_BIN:-mcProfiler}" version'
+    capabilities: [kernel_counters, structured_export]
+  - id: mctracer
+    kind: timeline-profiler
+    priority: 70
+    probe: '"${KDA_MCTRACER_BIN:-${MACA_PATH:-/opt/maca}/bin/mcTracer}" --help >/dev/null'
+    version_command: '"${KDA_MCTRACER_BIN:-${MACA_PATH:-/opt/maca}/bin/mcTracer}" --help'
+    capabilities: [timeline, structured_export]
+capabilities:
+  profilers: [mcprofiler, mctracer]
+  ai_profile_fallback: true
+  low_level_artifacts: []
+notes:
+  - Executable discovery is not capture/export validation; inspect bound profile evidence.
+  - Set binary paths only in task environment; no machine-specific paths belong here.
+  - mcProfiler counters are not a timeline and must never be converted to launch gaps.
+  - Trace gaps are observations, not proof of host causality; require scoped API correlation.

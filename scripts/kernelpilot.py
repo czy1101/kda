@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import copy
+import tempfile
+import uuid
 import hashlib
 import json
 import math
@@ -35,6 +38,12 @@ from controlled_ssh import (  # noqa: E402
     push_allowed,
     read_tle_wiki,
 )
+
+import measurement_evidence as measurement
+import candidate_evidence as evidence
+import profile_evidence
+import compiler_evidence
+import hypothesis_evidence
 
 DEFAULT_TASK = Path(".kernelpilot/task.yaml")
 EVIDENCE_DIRS = ("docs", "runs", "outputs", "profile")
@@ -72,7 +81,9 @@ def _contains_placeholder(value: Any) -> bool:
     return False
 
 
-def load_task(workspace: Path, task_path: Path | None = None) -> tuple[Path, dict[str, Any]]:
+def load_task(
+    workspace: Path, task_path: Path | None = None
+) -> tuple[Path, dict[str, Any]]:
     path = task_path or DEFAULT_TASK
     if not path.is_absolute():
         path = workspace / path
@@ -124,7 +135,9 @@ def _backend_profile(task: dict[str, Any]) -> dict[str, Any]:
     matches = _matching_backend_profiles(task)
     if len(matches) > 1:
         ids = [profile.get("id") for profile in matches]
-        raise ContractError(f"multiple backend profiles match target; set target.profile: {ids}")
+        raise ContractError(
+            f"multiple backend profiles match target; set target.profile: {ids}"
+        )
     return matches[0] if matches else {}
 
 
@@ -141,22 +154,32 @@ def validate_backend_profile(task: dict[str, Any]) -> list[str]:
     if profile.get("version") != 1 or not profile_id:
         errors.append(f"backend profile {profile_id} has an invalid version or id")
     if requested_id and profile_id != requested_id:
-        errors.append(f"backend profile id {profile_id!r} does not match target.profile")
+        errors.append(
+            f"backend profile id {profile_id!r} does not match target.profile"
+        )
     target = task.get("target", {})
     match = profile.get("match") or {}
     if match.get("backend") != target.get("backend"):
         errors.append(f"backend profile {profile_id} does not match target.backend")
-    for field, target_field in (("arches", "arch"), ("devices", "device"), ("languages", "language")):
+    for field, target_field in (
+        ("arches", "arch"),
+        ("devices", "device"),
+        ("languages", "language"),
+    ):
         accepted = match.get(field) or []
         actual = target.get(target_field)
         if accepted and actual and actual not in accepted:
-            errors.append(f"backend profile {profile_id} does not match target.{target_field}")
+            errors.append(
+                f"backend profile {profile_id} does not match target.{target_field}"
+            )
     skill_groups = profile.get("skills") or {}
     for group in ("always", "when_discovering", "when_profiling", "when_researching"):
         for relative in skill_groups.get(group, []):
             skill_file = KDA_ROOT / relative / "SKILL.md"
             if not skill_file.is_file():
-                errors.append(f"backend profile {profile_id} references missing skill: {relative}")
+                errors.append(
+                    f"backend profile {profile_id} references missing skill: {relative}"
+                )
     analysis_tools = profile.get("analysis_tools") or []
     if not isinstance(analysis_tools, list):
         errors.append(f"backend profile {profile_id} analysis_tools must be a list")
@@ -164,17 +187,28 @@ def validate_backend_profile(task: dict[str, Any]) -> list[str]:
         seen_tools: set[str] = set()
         for index, tool in enumerate(analysis_tools):
             if not isinstance(tool, dict):
-                errors.append(f"backend profile {profile_id} analysis_tools[{index}] must be a mapping")
+                errors.append(
+                    f"backend profile {profile_id} analysis_tools[{index}] must be a mapping"
+                )
                 continue
             tool_id = tool.get("id")
             if not isinstance(tool_id, str) or not tool_id:
-                errors.append(f"backend profile {profile_id} analysis_tools[{index}].id is required")
+                errors.append(
+                    f"backend profile {profile_id} analysis_tools[{index}].id is required"
+                )
             elif tool_id in seen_tools:
-                errors.append(f"backend profile {profile_id} has duplicate analysis tool: {tool_id}")
+                errors.append(
+                    f"backend profile {profile_id} has duplicate analysis tool: {tool_id}"
+                )
             else:
                 seen_tools.add(tool_id)
-            if not isinstance(tool.get("probe"), str) or not tool.get("probe", "").strip():
-                errors.append(f"backend profile {profile_id} analysis tool {tool_id!r} needs a probe")
+            if (
+                not isinstance(tool.get("probe"), str)
+                or not tool.get("probe", "").strip()
+            ):
+                errors.append(
+                    f"backend profile {profile_id} analysis tool {tool_id!r} needs a probe"
+                )
             for relative in tool.get("skills") or []:
                 skill_file = KDA_ROOT / relative / "SKILL.md"
                 if not skill_file.is_file():
@@ -184,7 +218,9 @@ def validate_backend_profile(task: dict[str, Any]) -> list[str]:
                     )
     for name, extension in (profile.get("extensions") or {}).items():
         if not isinstance(extension, dict):
-            errors.append(f"backend profile {profile_id} extension {name!r} must be a mapping")
+            errors.append(
+                f"backend profile {profile_id} extension {name!r} must be a mapping"
+            )
             continue
         relative = extension.get("skill")
         if relative and not (KDA_ROOT / relative / "SKILL.md").is_file():
@@ -213,7 +249,11 @@ def _profile_tool_config(task: dict[str, Any], tool_id: str | None) -> dict[str,
         if key not in ("tools", "discovery", "preferred_tools")
     }
     per_tool = profile_task.get("tools") or {}
-    if tool_id and isinstance(per_tool, dict) and isinstance(per_tool.get(tool_id), dict):
+    if (
+        tool_id
+        and isinstance(per_tool, dict)
+        and isinstance(per_tool.get(tool_id), dict)
+    ):
         config.update(per_tool[tool_id])
     return config
 
@@ -265,6 +305,7 @@ def _analysis_environment_fingerprint(workspace: Path, task: dict[str, Any]) -> 
         "shell": environment.get("shell", "bash"),
         "setup": environment.get("setup", ""),
         "backend_profile": (_backend_profile(task) or {}).get("id"),
+        "backend_profile_spec": _backend_profile(task),
         "backend": target.get("backend"),
         "device": target.get("device"),
         "arch": target.get("arch"),
@@ -320,13 +361,20 @@ def discover_analysis_tools(
                 "available": available,
                 "probe_exit_code": completed.returncode,
                 "capabilities": spec.get("capabilities") or [],
+                "capability_status": "declared_unverified",
             }
             stderr = (completed.stderr or "").strip()
             if stderr:
                 record["probe_error"] = stderr[:2000]
             version_command = spec.get("version_command")
-            if available and isinstance(version_command, str) and version_command.strip():
-                version = _run_environment_probe(workspace, task, version_command, ssh_bin)
+            if (
+                available
+                and isinstance(version_command, str)
+                and version_command.strip()
+            ):
+                version = _run_environment_probe(
+                    workspace, task, version_command, ssh_bin
+                )
                 version_text = ((version.stdout or "") + (version.stderr or "")).strip()
                 record["version_exit_code"] = version.returncode
                 if version_text:
@@ -364,7 +412,9 @@ def load_analysis_capabilities(
     return value
 
 
-def assess_tle(workspace: Path, task: dict[str, Any], ssh_bin: str = "ssh") -> dict[str, Any]:
+def assess_tle(
+    workspace: Path, task: dict[str, Any], ssh_bin: str = "ssh"
+) -> dict[str, Any]:
     """Check the configured TLE Wiki and task-declared API probe without installing anything."""
     policy = (task.get("analysis") or {}).get("extensions", {}).get("tle", "disabled")
     config = (task.get("extension_config") or {}).get("tle") or {}
@@ -391,11 +441,15 @@ def assess_tle(workspace: Path, task: dict[str, Any], ssh_bin: str = "ssh") -> d
                 try:
                     root.relative_to(workspace.resolve())
                 except ValueError as error:
-                    raise ContractError("extension_config.tle.wiki_path escapes workspace") from error
+                    raise ContractError(
+                        "extension_config.tle.wiki_path escapes workspace"
+                    ) from error
                 if root.is_dir():
                     result["wiki_available"] = True
                     result["wiki_files"] = [
-                        str(path.relative_to(root)) for path in sorted(root.rglob("*")) if path.is_file()
+                        str(path.relative_to(root))
+                        for path in sorted(root.rglob("*"))
+                        if path.is_file()
                     ]
                 else:
                     result["reason"] = "configured tle-wiki directory is missing"
@@ -413,7 +467,9 @@ def assess_tle(workspace: Path, task: dict[str, Any], ssh_bin: str = "ssh") -> d
             if completed.returncode != 0:
                 result["reason"] = "TLE API probe failed"
         elif result["wiki_available"] and not probe:
-            result["reason"] = "extension_config.tle.api_probe_command is not configured"
+            result["reason"] = (
+                "extension_config.tle.api_probe_command is not configured"
+            )
 
         if result["wiki_available"] and result["api_available"]:
             result["status"] = "available"
@@ -457,7 +513,9 @@ def select_analysis_strategy(
     specs_by_id = {tool.get("id"): tool for tool in specs}
     discovery_policy = policies.get("tool_discovery", "auto")
     profiling_policy = policies.get("profiling", "auto")
-    preferred = policies.get("preferred_tools") or profile_task.get("preferred_tools") or []
+    preferred = (
+        policies.get("preferred_tools") or profile_task.get("preferred_tools") or []
+    )
     explicit = profile_task.get("tool")
 
     discovery_pending = bool(
@@ -479,7 +537,9 @@ def select_analysis_strategy(
     else:
         available_ids = []
 
-    available_specs = [specs_by_id[name] for name in available_ids if name in specs_by_id]
+    available_specs = [
+        specs_by_id[name] for name in available_ids if name in specs_by_id
+    ]
     ranked = _rank_analysis_tools(available_specs, preferred)
     if explicit and explicit != "auto":
         ranked = [tool for tool in ranked if tool.get("id") == explicit]
@@ -497,7 +557,9 @@ def select_analysis_strategy(
     selected_capabilities = set((selected_spec or {}).get("capabilities") or [])
     selected_config = _profile_tool_config(task, selected_profiler)
 
-    candidate_command = selected_config.get("candidate_command") or selected_config.get("command")
+    candidate_command = selected_config.get("candidate_command") or selected_config.get(
+        "command"
+    )
     profiling_available = bool(selected_profiler and candidate_command)
 
     comparison_policy = policies.get("reference_profile_comparison", "auto")
@@ -509,10 +571,22 @@ def select_analysis_strategy(
         and selected_config.get("reference_command")
     )
 
-    if profiling_policy == "required" and not profiling_available and not discovery_pending:
-        raise ContractError("analysis.profiling is required but no backend profiler and candidate command are available")
-    if comparison_policy == "required" and not reference_available and not discovery_pending:
-        raise ContractError("reference profile comparison is required but unavailable or not configured")
+    if (
+        profiling_policy == "required"
+        and not profiling_available
+        and not discovery_pending
+    ):
+        raise ContractError(
+            "analysis.profiling is required but no backend profiler and candidate command are available"
+        )
+    if (
+        comparison_policy == "required"
+        and not reference_available
+        and not discovery_pending
+    ):
+        raise ContractError(
+            "reference profile comparison is required but unavailable or not configured"
+        )
 
     if discovery_pending:
         route = "discover_tools"
@@ -530,7 +604,9 @@ def select_analysis_strategy(
     if low_level_policy == "disabled":
         low_level = []
     if low_level_policy == "required" and not low_level:
-        raise ContractError("low-level artifacts are required but the backend declares none")
+        raise ContractError(
+            "low-level artifacts are required but the backend declares none"
+        )
 
     requested_extensions = policies.get("extensions") or {}
     backend_extensions = profile.get("extensions") or {}
@@ -549,7 +625,9 @@ def select_analysis_strategy(
             elif tle_assessment is None:
                 pending_extensions.append(name)
             elif policy == "required":
-                raise ContractError("TLE is required but its Wiki/API assessment did not pass")
+                raise ContractError(
+                    "TLE is required but its Wiki/API assessment did not pass"
+                )
             else:
                 skipped_extensions[name] = (tle_assessment or {}).get(
                     "reason", "TLE Wiki/API assessment did not pass"
@@ -557,9 +635,13 @@ def select_analysis_strategy(
         elif status in ("available", "experimental"):
             active_extensions.append(name)
         elif policy == "required":
-            raise ContractError(f"analysis extension {name!r} is required but unavailable")
+            raise ContractError(
+                f"analysis extension {name!r} is required but unavailable"
+            )
         else:
-            skipped_extensions[name] = extension.get("reason", "not declared by backend")
+            skipped_extensions[name] = extension.get(
+                "reason", "not declared by backend"
+            )
 
     return {
         "backend_profile": profile.get("id"),
@@ -579,7 +661,10 @@ def select_analysis_strategy(
             "structured_export" in selected_capabilities
             or capabilities.get("structured_profile_export")
         ),
-        "profile_export_configured": bool(selected_config.get("export_command")),
+        "profile_export_configured": bool(
+            selected_config.get("export_command")
+            or selected_config.get("adapter") == "metax"
+        ),
         "ai_profile_fallback": bool(
             policies.get(
                 "ai_profile_fallback",
@@ -587,6 +672,10 @@ def select_analysis_strategy(
             )
         ),
         "low_level_artifacts": low_level,
+        "compiler_capture_configured": bool(
+            (task.get("analysis") or {}).get("compiler")
+        ),
+        "hypothesis_policy": (task.get("analysis") or {}).get("hypotheses", "optional"),
         "active_extensions": active_extensions,
         "pending_extensions": pending_extensions,
         "skipped_extensions": skipped_extensions,
@@ -609,15 +698,21 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
         errors.append("version must be 1")
 
     execution = task.get("execution") or {"transport": "local"}
-    transport = execution.get("transport", "local") if isinstance(execution, dict) else None
+    transport = (
+        execution.get("transport", "local") if isinstance(execution, dict) else None
+    )
     if transport not in ("local", "ssh"):
         errors.append("execution.transport must be local or ssh")
     if transport == "ssh":
         if not execution.get("host"):
             errors.append("execution.host is required for ssh transport")
         remote_workspace = execution.get("workspace")
-        if not isinstance(remote_workspace, str) or not remote_workspace.startswith("/"):
-            errors.append("execution.workspace must be an absolute POSIX path for ssh transport")
+        if not isinstance(remote_workspace, str) or not remote_workspace.startswith(
+            "/"
+        ):
+            errors.append(
+                "execution.workspace must be an absolute POSIX path for ssh transport"
+            )
 
     implementation = task.get("implementation", {})
     implementation_path = implementation.get("path")
@@ -632,7 +727,10 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
             errors.append(f"{section}.command must be a non-empty string")
 
     baseline = task.get("baseline") or {}
-    if not isinstance(baseline.get("name"), str) or not baseline.get("name", "").strip():
+    if (
+        not isinstance(baseline.get("name"), str)
+        or not baseline.get("name", "").strip()
+    ):
         errors.append("baseline.name must be a non-empty comparator name")
     baseline_command = baseline.get("command")
     if baseline_command is not None and (
@@ -655,6 +753,15 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
             "goal.aggregation must be sum_ratio, mean_ratio, geomean_ratio, all, or any"
         )
 
+    try:
+        measurement.policy(task)
+    except evidence.EvidenceError as error:
+        errors.append(str(error))
+    try:
+        compiler_evidence.config(task)
+        hypothesis_evidence.policy(task)
+    except evidence.EvidenceError as error:
+        errors.append(str(error))
     errors.extend(validate_backend_profile(task))
 
     analysis = task.get("analysis")
@@ -670,7 +777,9 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
                 "low_level_artifacts",
             ):
                 if analysis.get(field, "auto") not in allowed_policies:
-                    errors.append(f"analysis.{field} must be auto, disabled, or required")
+                    errors.append(
+                        f"analysis.{field} must be auto, disabled, or required"
+                    )
             preferred_tools = analysis.get("preferred_tools") or []
             if not isinstance(preferred_tools, list) or not all(
                 isinstance(tool, str) and tool for tool in preferred_tools
@@ -680,7 +789,9 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
             if not isinstance(extensions, dict):
                 errors.append("analysis.extensions must be a mapping")
             elif any(value not in allowed_policies for value in extensions.values()):
-                errors.append("analysis extension policies must be auto, disabled, or required")
+                errors.append(
+                    "analysis extension policies must be auto, disabled, or required"
+                )
             if not errors:
                 try:
                     select_analysis_strategy(task)
@@ -705,14 +816,20 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
         if not isinstance(generalization, dict):
             errors.append("generalization must be a mapping")
         else:
-            allow_specialization = generalization.get("allow_shape_specialization", False)
+            allow_specialization = generalization.get(
+                "allow_shape_specialization", False
+            )
             if not isinstance(allow_specialization, bool):
-                errors.append("generalization.allow_shape_specialization must be boolean")
+                errors.append(
+                    "generalization.allow_shape_specialization must be boolean"
+                )
             guard_shapes = generalization.get("guard_shapes") or []
             if not isinstance(guard_shapes, list) or not all(
                 isinstance(shape, str) and shape for shape in guard_shapes
             ):
-                errors.append("generalization.guard_shapes must contain non-empty strings")
+                errors.append(
+                    "generalization.guard_shapes must contain non-empty strings"
+                )
 
     environment = task.get("environment")
     if environment is not None:
@@ -740,14 +857,22 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
             else:
                 wiki_path = tle.get("wiki_path", "tle-wiki")
                 if not isinstance(wiki_path, str) or not wiki_path:
-                    errors.append("extension_config.tle.wiki_path must be a non-empty string")
+                    errors.append(
+                        "extension_config.tle.wiki_path must be a non-empty string"
+                    )
                 else:
                     parsed = PurePosixPath(wiki_path)
                     if parsed.is_absolute() or ".." in parsed.parts:
-                        errors.append("extension_config.tle.wiki_path must stay inside the task workspace")
+                        errors.append(
+                            "extension_config.tle.wiki_path must stay inside the task workspace"
+                        )
                 probe = tle.get("api_probe_command")
-                if probe is not None and (not isinstance(probe, str) or not probe.strip()):
-                    errors.append("extension_config.tle.api_probe_command must be a non-empty string")
+                if probe is not None and (
+                    not isinstance(probe, str) or not probe.strip()
+                ):
+                    errors.append(
+                        "extension_config.tle.api_probe_command must be a non-empty string"
+                    )
 
     return errors
 
@@ -771,7 +896,23 @@ def run_contract_command(
     capture: bool = False,
     tool: str | None = None,
     variant: str = "candidate",
+    candidate: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    if candidate is not None:
+        hypothesis_evidence.require(workspace, task, candidate, section)
+
+        def execute(command):
+            bound_task = copy.deepcopy(task)
+            bound_task[section]["command"] = command
+            return run_contract_command(workspace, bound_task, section, capture=True)
+
+        result = evidence.run(
+            workspace, task, section, candidate, execute, evaluate_goal
+        )
+        if not capture:
+            print(result.stdout or "", end="")
+            print(result.stderr or "", end="", file=sys.stderr)
+        return result
     if section == "profile":
         if not tool:
             strategy_path = workspace / ANALYSIS_STRATEGY
@@ -785,6 +926,29 @@ def run_contract_command(
                 discovery = load_analysis_capabilities(workspace, task) or {}
                 tool = discovery.get("selected")
         config = _profile_tool_config(task, tool)
+        if config.get("adapter") == "metax":
+            if task.get("target", {}).get("backend") != "maca":
+                raise ContractError(
+                    "MetaX profile adapter requires target.backend: maca"
+                )
+            discovery = load_analysis_capabilities(workspace, task)
+            if discovery is None:
+                raise ContractError("run discover-tools before MetaX profile capture")
+
+            def execute_profile(command):
+                bound_task = copy.deepcopy(task)
+                bound_task["profile"] = {"command": command}
+                return run_contract_command(
+                    workspace, bound_task, "profile", tool=tool, capture=True
+                )
+
+            result = profile_evidence.run(
+                workspace, task, tool, config, execute_profile, discovery, variant
+            )
+            if not capture:
+                print(result.stdout or "", end="")
+                print(result.stderr or "", end="", file=sys.stderr)
+            return result
         command_field = {
             "candidate": "candidate_command",
             "reference": "reference_command",
@@ -870,7 +1034,9 @@ def _allowed_checkpoint_paths(task: dict[str, Any]) -> list[str]:
     paths: list[str] = []
     for value in values:
         if not isinstance(value, str) or not value:
-            raise ContractError("constraints.allowed_paths must contain non-empty strings")
+            raise ContractError(
+                "constraints.allowed_paths must contain non-empty strings"
+            )
         path = PurePosixPath(value)
         if path.is_absolute() or ".." in path.parts:
             raise ContractError(f"allowed path must stay inside the workspace: {value}")
@@ -882,7 +1048,11 @@ def _allowed_checkpoint_paths(task: dict[str, Any]) -> list[str]:
 
 def _checkpoint_source_root(workspace: Path, task: dict[str, Any]) -> Path:
     execution = task.get("execution") or {"transport": "local"}
-    return mirror_root(workspace) if execution.get("transport", "local") == "ssh" else workspace
+    return (
+        mirror_root(workspace)
+        if execution.get("transport", "local") == "ssh"
+        else workspace
+    )
 
 
 def _copy_checkpoint_entry(source: Path, destination: Path) -> None:
@@ -898,11 +1068,12 @@ def _copy_checkpoint_entry(source: Path, destination: Path) -> None:
         raise ContractError(f"cannot checkpoint missing allowed path: {source}")
 
 
-def save_checkpoint(
+def _write_checkpoint(
     workspace: Path,
     task: dict[str, Any],
     name: str,
     candidate: str,
+    approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if name not in ("baseline", "best"):
         raise ContractError("checkpoint name must be baseline or best")
@@ -922,14 +1093,387 @@ def save_checkpoint(
         "candidate": candidate,
         "saved_at": _utc_now(),
         "paths": _allowed_checkpoint_paths(task),
+        "source_hashes": evidence.local_allowed_snapshot(temporary, task),
+        "approval": approval,
+        "recovery_only": approval is None,
     }
+    if approval is not None:
+        staged = metadata["source_hashes"]
+        expected = {key: approval["identity"]["files"].get(key) for key in staged}
+        if (
+            staged != expected
+            or evidence.source_snapshot(workspace, task) != approval["identity"]
+        ):
+            raise ContractError(
+                "source changed while staging checkpoint; existing best preserved"
+            )
     (temporary / "checkpoint.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
     )
+    previous = None
     if destination.exists():
-        shutil.rmtree(destination)
-    temporary.rename(destination)
+        previous = checkpoint_parent / f".{name}.previous-{uuid.uuid4().hex}"
+        destination.rename(previous)
+    try:
+        temporary.rename(destination)
+    except BaseException:
+        if previous is not None and not destination.exists():
+            previous.rename(destination)
+        raise
+    # Preserve prior snapshots for recovery; task owners may archive them later.
     return metadata
+
+
+def save_checkpoint(
+    workspace: Path, task: dict[str, Any], name: str, candidate: str
+) -> dict[str, Any]:
+    """Only content-bound, correct, improved candidates may replace best."""
+    if name == "baseline":
+        return _write_checkpoint(workspace, task, name, candidate)
+    if name != "best":
+        raise ContractError("checkpoint name must be baseline or best")
+    evidence.validate_candidate(candidate)
+    hypothesis_evidence.require(workspace, task, candidate, "promotion")
+    identity = evidence.source_snapshot(workspace, task)
+    _, correct = evidence.require_pass(workspace, candidate, "correctness", identity)
+    bench_dir, bench = evidence.require_pass(
+        workspace, candidate, "benchmark", identity
+    )
+    if bench.get("correctness_run_id") != correct["run_id"]:
+        raise ContractError("benchmark must follow the latest passing correctness run")
+    records, errors = _load_candidate_records(workspace)
+    kept = [r for r in records if r.get("id") == candidate]
+    if (
+        errors
+        or len(kept) != 1
+        or kept[0].get("decision") != "keep"
+        or kept[0].get("correctness") != "pass"
+    ):
+        raise ContractError(
+            "save-best requires one valid kept, correct candidate record"
+        )
+    generalization_id = None
+    if task.get("generalization", {}).get("command"):
+        _, general = evidence.require_pass(
+            workspace, candidate, "generalization", identity
+        )
+        if (
+            general.get("benchmark_run_id") != bench["run_id"]
+            or general.get("correctness_run_id") != correct["run_id"]
+        ):
+            raise ContractError(
+                "generalization must follow the latest correctness and benchmark"
+            )
+        generalization_id = general["run_id"]
+    evaluation, errors = evaluate_goal(bench_dir, task, candidate)
+    if errors or evaluation is None:
+        raise ContractError("invalid frozen benchmark evidence: " + "; ".join(errors))
+    measured = None
+    if measurement.policy(task):
+        measured, evaluation = measurement.require_measurement(
+            workspace, task, candidate, identity, evaluate_goal
+        )
+    # Check the actual source that will be copied, not just a remote-state cache.
+    mirrored = evidence.local_allowed_snapshot(
+        _checkpoint_source_root(workspace, task), task
+    )
+    if mirrored != {key: identity["files"].get(key) for key in mirrored}:
+        raise ContractError(
+            "local mirror does not match validated execution source; pull it before saving"
+        )
+    best_path = workspace / CHECKPOINT_ROOT / "best/checkpoint.json"
+    previous = json.loads(best_path.read_text()) if best_path.is_file() else {}
+    previous_approval = previous.get("approval")
+    comparison = None
+    if previous_approval:
+        if previous_approval["identity"]["task_sha256"] != identity["task_sha256"]:
+            raise ContractError(
+                "best was approved under a different task; use a new round"
+            )
+        allowed = identity["allowed_paths"]
+
+        def protected_files(snapshot):
+            return {
+                key: value
+                for key, value in snapshot["files"].items()
+                if not any(
+                    key == path or key.startswith(path + "/") for path in allowed
+                )
+            }
+
+        if protected_files(previous_approval["identity"]) != protected_files(identity):
+            raise ContractError(
+                "protected inputs changed since baseline/best approval; use a new round"
+            )
+        previous_values = previous_approval["evaluation"]
+        if previous_values["unit"] != evaluation["unit"]:
+            raise ContractError("best/candidate units differ")
+        old = {r["shape"]: r for r in previous_values["per_shape"]}
+        if set(old) != {r["shape"] for r in evaluation["per_shape"]}:
+            raise ContractError("best/candidate workload sets differ")
+        if any(
+            r["baseline_value"] != old[r["shape"]]["baseline_value"]
+            for r in evaluation["per_shape"]
+        ):
+            raise ContractError("baseline values changed since best approval")
+        # Reuse the generic evaluator to compare against the current best,
+        # independently of whether the delivery target has been reached.
+        with tempfile.TemporaryDirectory(prefix="kda-compare-") as tmp:
+            location = Path(tmp)
+            (location / "runs").mkdir()
+            with (location / "runs/benchmark.csv").open("w", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=(
+                        "candidate",
+                        "shape",
+                        "metric_value",
+                        "baseline_value",
+                        "unit",
+                        "status",
+                    ),
+                )
+                writer.writeheader()
+                for row in evaluation["per_shape"]:
+                    writer.writerow(
+                        dict(
+                            candidate=candidate,
+                            shape=row["shape"],
+                            metric_value=row["metric_value"],
+                            baseline_value=old[row["shape"]]["metric_value"],
+                            unit=evaluation["unit"],
+                            status="pass",
+                        )
+                    )
+            compare_task = copy.deepcopy(task)
+            compare_task["goal"].pop("target_value", None)
+            compare_task["goal"]["relative_to_baseline"] = 1.0
+            comparison, errors = evaluate_goal(location, compare_task, candidate)
+            if errors:
+                raise ContractError("invalid best comparison: " + "; ".join(errors))
+        ratio = comparison["aggregate_ratio"]
+        improved = ratio < 1 if evaluation["direction"] == "minimize" else ratio > 1
+        if not improved or not comparison["regression_ok"]:
+            raise ContractError(
+                "candidate does not improve current best within regression limits"
+            )
+    elif candidate != "baseline":
+        raise ContractError(
+            "approve a measured baseline before promoting candidates; recovery snapshots are not measured best"
+        )
+    if not evaluation["regression_ok"]:
+        raise ContractError(
+            "candidate violates regression limits against the configured comparator"
+        )
+    confirmation_id = None
+    if measured is not None and candidate != "baseline":
+        confirmation = measurement.require_confirmation(
+            workspace, task, candidate, measured, previous
+        )
+        confirmation_id = confirmation["id"]
+    approval = {
+        "identity": identity,
+        "correctness_run_id": correct["run_id"],
+        "benchmark_run_id": bench["run_id"],
+        "generalization_run_id": generalization_id,
+        "evaluation": evaluation,
+        "comparison_to_best": comparison,
+        "benchmark_artifacts": bench["artifacts"],
+        "measurement_id": measured["id"] if measured else None,
+        "confirmation_id": confirmation_id,
+    }
+    return _write_checkpoint(workspace, task, name, candidate, approval)
+
+
+def confirm_candidate(
+    workspace: Path, task: dict[str, Any], candidate: str
+) -> dict[str, Any]:
+    """Interleave current approved best and candidate; restore best on failure."""
+    p = measurement.policy(task)
+    if p is None or candidate == "baseline":
+        raise ContractError(
+            "confirmation requires a measurement policy and a non-baseline candidate"
+        )
+    identity = evidence.source_snapshot(workspace, task)
+    measured, _ = measurement.require_measurement(
+        workspace, task, candidate, identity, evaluate_goal
+    )
+    checkpoint = workspace / CHECKPOINT_ROOT / "best"
+    previous = json.loads((checkpoint / "checkpoint.json").read_text())
+    if not previous.get("approval") or not previous["approval"].get("measurement_id"):
+        raise ContractError(
+            "confirmation requires a repeatedly measured, approved best"
+        )
+    if previous["candidate"] == candidate:
+        raise ContractError("candidate is already best")
+    entry, record = measurement.begin(workspace, measurement.CONFIRM, candidate)
+    record.update(
+        identity=identity,
+        measurement_id=measured["id"],
+        best_candidate=previous["candidate"],
+        best_checkpoint_sha256=evidence.digest(checkpoint / "checkpoint.json"),
+        pairs=[],
+        run_record_hashes={},
+    )
+    mirror = _checkpoint_source_root(workspace, task)
+    saved = entry / "candidate-source"
+    for relative in _allowed_checkpoint_paths(task):
+        _copy_checkpoint_entry(mirror / relative, saved / relative)
+    hashes = evidence.local_allowed_snapshot(saved, task)
+    if hashes != {key: identity["files"].get(key) for key in hashes}:
+        record.update(status="error", error="candidate mirror mismatch")
+        measurement.write_record(entry, record)
+        raise ContractError("candidate mirror mismatch")
+
+    def deploy_candidate():
+        for relative in _allowed_checkpoint_paths(task):
+            target = mirror / relative
+            if target.is_file() or target.is_symlink():
+                target.unlink()
+            elif target.is_dir():
+                shutil.rmtree(target)
+            _copy_checkpoint_entry(saved / relative, target)
+        if task.get("execution", {}).get("transport") == "ssh":
+            push_allowed(workspace, task)
+
+    passed = False
+    try:
+        base_medians = {s: [] for s in task["benchmark"]["shapes"]}
+        trial_medians = {s: [] for s in task["benchmark"]["shapes"]}
+        for pair_index in range(p["confirmation_pairs"]):
+            values = []
+            for arm in ("best", "candidate"):
+                if arm == "best":
+                    if (
+                        evidence.digest(checkpoint / "checkpoint.json")
+                        != record["best_checkpoint_sha256"]
+                    ):
+                        raise ContractError("best changed during confirmation")
+                    restore_checkpoint(workspace, task)
+                    selected = previous["candidate"]
+                    expected_identity = previous["approval"]["identity"]
+                else:
+                    deploy_candidate()
+                    selected = candidate
+                    expected_identity = identity
+                completed = measurement.tracked_benchmark(
+                    workspace,
+                    record,
+                    lambda section, candidate: run_contract_command(
+                        workspace, task, section, candidate=candidate, capture=True
+                    ),
+                    selected,
+                    pair=pair_index,
+                    arm=arm,
+                )
+                if completed.returncode:
+                    raise ContractError("confirmation benchmark failed")
+                _, run = evidence.require_pass(
+                    workspace, selected, "benchmark", expected_identity
+                )
+                record["run_ids"].append(run["run_id"])
+                record["run_record_hashes"][run["run_id"]] = evidence.digest(
+                    workspace / evidence.ROOT / run["run_id"] / "record.json"
+                )
+                summary = run["measurement"]
+                if {
+                    shape: row["count"] for shape, row in summary["per_shape"].items()
+                } != measured["sample_counts"]:
+                    raise ContractError(
+                        "confirmation sample counts differ from frozen measurement policy"
+                    )
+                if (
+                    summary["environment_id"] != measured["environment_id"]
+                    or summary["unit"] != measured["evaluation"]["unit"]
+                ):
+                    raise ContractError(
+                        "confirmation runtime environment or unit changed"
+                    )
+                values.append(
+                    {
+                        shape: row["median"]
+                        for shape, row in summary["per_shape"].items()
+                    }
+                )
+                measurement.write_record(entry, record)
+            base, trial = values
+            for shape in base_medians:
+                base_medians[shape].append(base[shape])
+                trial_medians[shape].append(trial[shape])
+            comparison_task = copy.deepcopy(task)
+            comparison_task["goal"].pop("target_value", None)
+            direction = task["goal"].get("direction", "minimize")
+            comparison_task["goal"]["relative_to_baseline"] = (
+                1 - p["min_improvement"]
+                if direction == "minimize"
+                else 1 + p["min_improvement"]
+            )
+            pair_dir = entry / f"pair-{pair_index}"
+            pair_dir.mkdir()
+            evaluation = measurement.make_evaluation(
+                pair_dir,
+                comparison_task,
+                candidate,
+                trial,
+                base,
+                measured["evaluation"]["unit"],
+                evaluate_goal,
+            )
+            artifact = f"pair-{pair_index}/runs/benchmark.csv"
+            record["artifacts"][artifact] = evidence.digest(entry / artifact)
+            record["pairs"].append(evaluation)
+            measurement.write_record(entry, record)
+            ratio = evaluation["aggregate_ratio"]
+            strictly_better = ratio < 1 if direction == "minimize" else ratio > 1
+            if not evaluation["target_reached"] or not strictly_better:
+                raise ContractError(
+                    "interleaved pair did not meet improvement/regression policy"
+                )
+        dispersion = {
+            arm: {
+                shape: measurement.stats(samples) for shape, samples in medians.items()
+            }
+            for arm, medians in (("best", base_medians), ("candidate", trial_medians))
+        }
+        record["dispersion"] = dispersion
+        if any(
+            row["relative_mad"] > p["max_relative_mad"]
+            for arm in dispersion.values()
+            for row in arm.values()
+        ):
+            raise measurement.Inconclusive(
+                "confirmation drift/dispersion exceeds policy", "noise"
+            )
+        if evidence.source_snapshot(workspace, task) != identity:
+            raise ContractError("candidate changed during confirmation")
+        record["status"] = "pass"
+        passed = True
+    except BaseException as error:
+        record.update(
+            status=(
+                "inconclusive"
+                if isinstance(error, measurement.Inconclusive)
+                else "error"
+            ),
+            category=getattr(
+                error, "category", "confirmation_rejected_or_execution_failed"
+            ),
+            error=f"{type(error).__name__}: {error}",
+        )
+        raise
+    finally:
+        if not passed:
+            try:
+                restore_checkpoint(workspace, task)
+                record["rollback"] = "restored_best"
+            except BaseException as error:
+                record["rollback"] = "failed"
+                record["rollback_error"] = str(error)
+        else:
+            record["rollback"] = "candidate_left_for_explicit_promotion"
+        record["finished_at"] = _utc_now()
+        measurement.write_record(entry, record)
+    return record
 
 
 def restore_checkpoint(
@@ -942,6 +1486,14 @@ def restore_checkpoint(
     if not metadata_path.is_file():
         raise ContractError(f"checkpoint does not exist: {name}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if metadata.get("paths") != _allowed_checkpoint_paths(task):
+        raise ContractError("checkpoint allowed_paths do not match current task")
+    if metadata.get("source_hashes") is not None:
+        if (
+            evidence.local_allowed_snapshot(checkpoint, task)
+            != metadata["source_hashes"]
+        ):
+            raise ContractError("checkpoint source hash mismatch; refusing restore")
     destination_root = _checkpoint_source_root(workspace, task)
     for relative in _allowed_checkpoint_paths(task):
         source = checkpoint / relative
@@ -956,6 +1508,8 @@ def restore_checkpoint(
         metadata["pushed"] = push_allowed(workspace, task)
     metadata["restored_at"] = _utc_now()
     return metadata
+
+
 def _digest(path: Path) -> str:
     if not path.exists() and not path.is_symlink():
         return "<missing>"
@@ -1004,7 +1558,9 @@ def _load_candidate_records(workspace: Path) -> tuple[list[dict[str, Any]], list
                 errors.append(f"candidates.jsonl:{line_number}: {error}")
                 continue
             if not isinstance(record, dict):
-                errors.append(f"candidates.jsonl:{line_number}: record must be an object")
+                errors.append(
+                    f"candidates.jsonl:{line_number}: record must be an object"
+                )
                 continue
             for field in ("id", "hypothesis", "correctness", "decision"):
                 if field not in record:
@@ -1013,7 +1569,9 @@ def _load_candidate_records(workspace: Path) -> tuple[list[dict[str, Any]], list
                     )
             candidate_id = record.get("id")
             if candidate_id in seen:
-                errors.append(f"candidates.jsonl:{line_number}: duplicate id {candidate_id}")
+                errors.append(
+                    f"candidates.jsonl:{line_number}: duplicate id {candidate_id}"
+                )
             if candidate_id:
                 seen.add(candidate_id)
             if record.get("correctness") not in ("pass", "fail", "not_run"):
@@ -1023,11 +1581,21 @@ def _load_candidate_records(workspace: Path) -> tuple[list[dict[str, Any]], list
                 errors.append(f"candidates.jsonl:{line_number}: invalid decision")
             if decision in ("revise", "reject"):
                 if not record.get("reason"):
-                    errors.append(f"candidates.jsonl:{line_number}: rejected/revised candidate needs reason")
-                if record.get("rollback") not in ("restored_best", "not_needed", "failed"):
-                    errors.append(f"candidates.jsonl:{line_number}: rejected/revised candidate needs rollback")
+                    errors.append(
+                        f"candidates.jsonl:{line_number}: rejected/revised candidate needs reason"
+                    )
+                if record.get("rollback") not in (
+                    "restored_best",
+                    "not_needed",
+                    "failed",
+                ):
+                    errors.append(
+                        f"candidates.jsonl:{line_number}: rejected/revised candidate needs rollback"
+                    )
             if decision == "keep" and record.get("correctness") != "pass":
-                errors.append(f"candidates.jsonl:{line_number}: kept candidate must pass correctness")
+                errors.append(
+                    f"candidates.jsonl:{line_number}: kept candidate must pass correctness"
+                )
             records.append(record)
     return records, errors
 
@@ -1039,7 +1607,7 @@ def evaluate_goal(
     path = workspace / "runs/benchmark.csv"
     errors: list[str] = []
     if not path.is_file():
-        return None, errors
+        return None, ["missing benchmark ledger: runs/benchmark.csv"]
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         required_columns = {
@@ -1060,6 +1628,33 @@ def evaluate_goal(
         rows = [row for row in reader if row["candidate"] == candidate]
 
     configured_shapes = task.get("benchmark", {}).get("shapes") or []
+    if not isinstance(configured_shapes, list) or any(
+        not isinstance(shape, str) or not shape.strip() for shape in configured_shapes
+    ):
+        return None, ["benchmark.shapes must contain non-empty workload identifiers"]
+    if len(configured_shapes) != len(set(configured_shapes)):
+        return None, ["benchmark.shapes contains duplicate workload identifiers"]
+    # The ledger contains summaries, not samples. Never select the last repeat
+    # implicitly: the harness must apply its declared sampling policy first.
+    selected = [
+        row
+        for row in rows
+        if not configured_shapes or row["shape"] in configured_shapes
+    ]
+    seen = set()
+    for row in selected:
+        shape = row["shape"]
+        if not shape or not shape.strip():
+            errors.append(
+                "benchmark rows require a non-empty shape/workload identifier"
+            )
+        elif shape in seen:
+            errors.append(
+                f"duplicate benchmark summary for candidate {candidate!r}, shape {shape!r}"
+            )
+        seen.add(shape)
+    if errors:
+        return None, errors
     if configured_shapes:
         by_shape = {row["shape"]: row for row in rows}
         missing_shapes = [shape for shape in configured_shapes if shape not in by_shape]
@@ -1074,20 +1669,46 @@ def evaluate_goal(
         errors.append(f"best candidate {candidate!r} has non-passing benchmark rows")
         return None, errors
 
+    units = {row["unit"] for row in rows}
+    if len(units) != 1 or any(not unit or not unit.strip() for unit in units):
+        return None, [
+            "benchmark summaries must use one non-empty unit; normalize units before evaluation"
+        ]
     try:
         values = [float(row["metric_value"]) for row in rows]
         baselines = [float(row["baseline_value"]) for row in rows]
-    except ValueError:
+    except (TypeError, ValueError):
         errors.append("benchmark metric_value and baseline_value must be numeric")
         return None, errors
-    if any(value <= 0 for value in values + baselines):
-        errors.append("benchmark metric values must be positive")
+    if any(not math.isfinite(value) or value <= 0 for value in values + baselines):
+        errors.append("benchmark metric values must be finite and positive")
         return None, errors
 
     ratios = [value / baseline for value, baseline in zip(values, baselines)]
+    if any(not math.isfinite(ratio) or ratio <= 0 for ratio in ratios):
+        return None, ["benchmark ratios must be finite and positive"]
     goal = task["goal"]
+    for field in ("relative_to_baseline", "target_value", "max_regression"):
+        if field in goal:
+            value = goal[field]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                return None, [f"goal.{field} must be a finite number"]
+    if ("relative_to_baseline" in goal) == ("target_value" in goal):
+        return None, ["goal needs exactly one of relative_to_baseline or target_value"]
+    if goal.get("relative_to_baseline", 1) <= 0 or goal.get("max_regression", 0) < 0:
+        return None, [
+            "relative target must be positive and max_regression non-negative"
+        ]
     aggregation = goal.get("aggregation", "sum_ratio")
     direction = goal.get("direction", "minimize")
+    if direction not in ("minimize", "maximize"):
+        return None, ["goal.direction must be minimize or maximize"]
+    if aggregation not in ("sum_ratio", "mean_ratio", "geomean_ratio", "all", "any"):
+        return None, ["unsupported goal.aggregation"]
     if aggregation == "sum_ratio":
         aggregate_ratio = sum(values) / sum(baselines)
         aggregate_value = sum(values)
@@ -1095,8 +1716,12 @@ def evaluate_goal(
         aggregate_ratio = sum(ratios) / len(ratios)
         aggregate_value = sum(values) / len(values)
     elif aggregation == "geomean_ratio":
-        aggregate_ratio = math.exp(sum(math.log(ratio) for ratio in ratios) / len(ratios))
-        aggregate_value = math.exp(sum(math.log(value) for value in values) / len(values))
+        aggregate_ratio = math.exp(
+            sum(math.log(ratio) for ratio in ratios) / len(ratios)
+        )
+        aggregate_value = math.exp(
+            sum(math.log(value) for value in values) / len(values)
+        )
     elif aggregation == "all":
         aggregate_ratio = max(ratios) if direction == "minimize" else min(ratios)
         aggregate_value = max(values) if direction == "minimize" else min(values)
@@ -1104,6 +1729,8 @@ def evaluate_goal(
         aggregate_ratio = min(ratios) if direction == "minimize" else max(ratios)
         aggregate_value = min(values) if direction == "minimize" else max(values)
 
+    if not math.isfinite(aggregate_ratio) or not math.isfinite(aggregate_value):
+        return None, ["benchmark aggregation overflowed; rescale the metric unit"]
     relative_target = goal.get("relative_to_baseline")
     reached = None
     if relative_target is not None:
@@ -1116,12 +1743,20 @@ def evaluate_goal(
     if absolute_target is not None:
         if aggregation == "all":
             reached = all(
-                value <= absolute_target if direction == "minimize" else value >= absolute_target
+                (
+                    value <= absolute_target
+                    if direction == "minimize"
+                    else value >= absolute_target
+                )
                 for value in values
             )
         elif aggregation == "any":
             reached = any(
-                value <= absolute_target if direction == "minimize" else value >= absolute_target
+                (
+                    value <= absolute_target
+                    if direction == "minimize"
+                    else value >= absolute_target
+                )
                 for value in values
             )
         else:
@@ -1147,6 +1782,23 @@ def evaluate_goal(
         "aggregate_ratio": aggregate_ratio,
         "aggregate_value": aggregate_value,
         "per_shape_ratios": ratios,
+        "unit": next(iter(units)),
+        "direction": direction,
+        "per_shape": [
+            {
+                "shape": row["shape"],
+                "metric_value": value,
+                "baseline_value": baseline,
+                "ratio": ratio,
+                "regression_ok": max_regression is None
+                or (
+                    ratio <= 1 + max_regression
+                    if direction == "minimize"
+                    else ratio >= 1 - max_regression
+                ),
+            }
+            for row, value, baseline, ratio in zip(rows, values, baselines, ratios)
+        ],
         "regression_ok": regression_ok,
         "target_reached": reached,
     }, errors
@@ -1173,9 +1825,7 @@ def verify_evidence(
             errors.append(f"missing or empty evidence file: {relative}")
 
     if task is not None:
-        tle_policy = (
-            task.get("extensions", {}).get("tle", {}).get("policy", "disabled")
-        )
+        tle_policy = task.get("extensions", {}).get("tle", {}).get("policy", "disabled")
         if tle_policy != "disabled":
             try:
                 load_tle_assessment(workspace, task)
@@ -1197,11 +1847,15 @@ def verify_evidence(
                 )
 
     candidate_records, candidate_errors = _load_candidate_records(workspace)
-    candidate_ids = [record.get("id") for record in candidate_records if record.get("id")]
+    candidate_ids = [
+        record.get("id") for record in candidate_records if record.get("id")
+    ]
     errors.extend(candidate_errors)
     if task is not None:
         maximum = task.get("stop", {}).get("max_candidates")
-        attempted = [candidate for candidate in candidate_ids if candidate != "baseline"]
+        attempted = [
+            candidate for candidate in candidate_ids if candidate != "baseline"
+        ]
         if maximum is not None and len(attempted) > maximum:
             errors.append(
                 f"candidate budget exceeded: {len(attempted)} attempted, maximum {maximum}"
@@ -1213,8 +1867,12 @@ def verify_evidence(
             reader = csv.DictReader(handle)
             if not reader.fieldnames:
                 errors.append("runs/benchmark.csv has no header")
-            elif "candidate" not in reader.fieldnames or "shape" not in reader.fieldnames:
-                errors.append("runs/benchmark.csv must include candidate and shape columns")
+            elif (
+                "candidate" not in reader.fieldnames or "shape" not in reader.fieldnames
+            ):
+                errors.append(
+                    "runs/benchmark.csv must include candidate and shape columns"
+                )
             elif not any(True for _ in reader):
                 errors.append("runs/benchmark.csv has no measurements")
     if final_result is not None and task is not None:
@@ -1222,11 +1880,17 @@ def verify_evidence(
         if best and best not in candidate_ids:
             errors.append(f"final result names unknown best candidate: {best}")
         if best:
-            best_records = [record for record in candidate_records if record.get("id") == best]
+            best_records = [
+                record for record in candidate_records if record.get("id") == best
+            ]
             if best_records and best_records[-1].get("correctness") != "pass":
-                errors.append(f"final best candidate {best!r} did not pass recorded correctness")
+                errors.append(
+                    f"final best candidate {best!r} did not pass recorded correctness"
+                )
             if final_result.get("correctness") != "pass":
-                errors.append("final result correctness must be pass for a selected best candidate")
+                errors.append(
+                    "final result correctness must be pass for a selected best candidate"
+                )
             evaluation, goal_errors = evaluate_goal(workspace, task, best)
             errors.extend(goal_errors)
             if evaluation is not None:
@@ -1301,14 +1965,28 @@ by the optimization prompt.
 Run every contracted command through the environment-aware wrapper:
 - discover backend analysis tools: python3 {driver} discover-tools --workspace {workspace}
 - assess TLE only when enabled: python3 {driver} assess-tle --workspace {workspace}
-- correctness: python3 {driver} run correctness --workspace {workspace}
+- correctness: python3 {driver} run correctness --workspace {workspace} --candidate <candidate-id>
 - baseline, when configured: python3 {driver} run baseline --workspace {workspace}
-- benchmark: python3 {driver} run benchmark --workspace {workspace}
+- benchmark: python3 {driver} run benchmark --workspace {workspace} --candidate <candidate-id>
+- generalization, when configured: python3 {driver} run generalization --workspace {workspace} --candidate <candidate-id>
 - inspect the selected route: python3 {driver} strategy --workspace {workspace}
 - profile the selected tool, only when configured and justified: python3 {driver} run profile --workspace {workspace} --variant candidate
 - profile a comparable reference when configured: python3 {driver} run profile --workspace {workspace} --variant reference
 - save a correct improved candidate as the recoverable best: python3 {driver} checkpoint save-best --workspace {workspace} --candidate <candidate-id>
 - restore the current best when needed: python3 {driver} checkpoint restore-best --workspace {workspace}
+
+Before promoting any candidate, run bound correctness and benchmark for candidate
+baseline and approve that measured baseline first. Benchmark harnesses must write
+their contracted result_path with run_id and candidate columns from environment
+KERNELPILOT_RUN_ID and KERNELPILOT_CANDIDATE. Old unbound results cannot approve best.
+A candidate may improve best without reaching the final delivery target.
+When measurement is configured, use `measure --candidate <candidate-id>` instead
+of a single benchmark for baseline and screening. It freezes the original
+baseline. Before save-best for later candidates, use `confirm --candidate
+<candidate-id>` to interleave current best and candidate; rerun bound
+generalization after confirmation when required. Never replace the original
+baseline with an external reference. Device guards and raw sample JSON must
+satisfy docs/measurement-reliability.md in the KDA repository.
 
 Before editing, create docs/draft.md and docs/plan.md and preserve a rollback
 copy of the implementation. Modify only constraints.allowed_paths. Never modify
@@ -1344,8 +2022,10 @@ def run_codex(
     else:
         before = snapshot_forbidden(workspace, task)
     if not dry_run:
-        save_checkpoint(workspace, task, "baseline", "baseline")
-        save_checkpoint(workspace, task, "best", "baseline")
+        if not (workspace / CHECKPOINT_ROOT / "baseline/checkpoint.json").exists():
+            save_checkpoint(workspace, task, "baseline", "baseline")
+        if not (workspace / CHECKPOINT_ROOT / "best/checkpoint.json").exists():
+            _write_checkpoint(workspace, task, "best", "baseline")
     prompt = build_prompt(workspace, task)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     events_path = workspace / "runs" / f"codex-events-{timestamp}.jsonl"
@@ -1405,10 +2085,16 @@ def run_codex(
         try:
             restoration = restore_checkpoint(workspace, task, "best")
         except (ContractError, SSHAdapterError, OSError, json.JSONDecodeError) as error:
-            restoration_errors.append(f"automatic best-checkpoint restore failed: {error}")
+            restoration_errors.append(
+                f"automatic best-checkpoint restore failed: {error}"
+            )
 
     final_result, final_errors = load_final_result(final_path)
     if final_result and restoration:
+        if final_result.get("best_candidate") and not restoration.get("approval"):
+            restoration_errors.append(
+                "final best has no source-bound approval; recovery snapshot is not validated best"
+            )
         reported_best = final_result.get("best_candidate")
         restored_best = restoration.get("candidate")
         if reported_best and reported_best != restored_best:
@@ -1423,9 +2109,11 @@ def run_codex(
     forbidden_changes = [] if remote else compare_forbidden(workspace, task, before)
     state.update(
         {
-            "stage": "complete"
-            if returncode == 0 and not evidence_errors and not forbidden_changes
-            else "failed",
+            "stage": (
+                "complete"
+                if returncode == 0 and not evidence_errors and not forbidden_changes
+                else "failed"
+            ),
             "finished_at": _utc_now(),
             "codex_exit_code": returncode,
             "thread_id": thread_id,
@@ -1490,6 +2178,28 @@ def main(argv: list[str] | None = None) -> int:
     discovery_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
     discovery_parser.add_argument("--ssh-bin", default="ssh")
 
+    profile_report_parser = subparsers.add_parser("profile-report")
+    profile_report_parser.add_argument(
+        "--workspace", type=_workspace, default=Path.cwd()
+    )
+    profile_report_parser.add_argument("--run", required=True)
+
+    compile_parser = subparsers.add_parser("compile")
+    compile_parser.add_argument("action", choices=("capture", "compare"))
+    compile_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+    compile_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+    compile_parser.add_argument("--candidate")
+    compile_parser.add_argument("--left")
+    compile_parser.add_argument("--right")
+
+    hypothesis_parser = subparsers.add_parser("hypothesis")
+    hypothesis_parser.add_argument("action", choices=("register", "assess"))
+    hypothesis_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+    hypothesis_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+    hypothesis_parser.add_argument("--spec", type=Path)
+    hypothesis_parser.add_argument("--candidate")
+    hypothesis_parser.add_argument("--capture")
+
     tle_parser = subparsers.add_parser("assess-tle")
     tle_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     tle_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
@@ -1497,11 +2207,16 @@ def main(argv: list[str] | None = None) -> int:
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument(
-        "section", choices=("correctness", "baseline", "benchmark", "profile")
+        "section",
+        choices=("correctness", "baseline", "benchmark", "profile", "generalization"),
     )
     run_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     run_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
     run_parser.add_argument("--tool")
+    run_parser.add_argument(
+        "--candidate",
+        help="Bind correctness/benchmark/generalization evidence to this candidate",
+    )
     run_parser.add_argument(
         "--variant", choices=("candidate", "reference", "export"), default="candidate"
     )
@@ -1520,6 +2235,17 @@ def main(argv: list[str] | None = None) -> int:
     checkpoint_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     checkpoint_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
     checkpoint_parser.add_argument("--candidate")
+
+    for action in ("measure", "confirm"):
+        stage_parser = subparsers.add_parser(action)
+        stage_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+        stage_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+        stage_parser.add_argument("--candidate", required=True)
+
+    evaluate_parser = subparsers.add_parser("evaluate")
+    evaluate_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+    evaluate_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+    evaluate_parser.add_argument("--candidate", required=True)
 
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
@@ -1550,7 +2276,101 @@ def main(argv: list[str] | None = None) -> int:
             print("evidence: valid")
             return 0
 
+        if args.command == "profile-report":
+            print(
+                json.dumps(
+                    profile_evidence.report(args.workspace, args.run),
+                    indent=2,
+                    allow_nan=False,
+                )
+            )
+            return 0
+
+        if args.command == "compile" and args.action == "compare":
+            if not args.left or not args.right:
+                raise ContractError(
+                    "compile compare requires --left and --right capture IDs"
+                )
+            print(
+                json.dumps(
+                    compiler_evidence.compare(args.workspace, args.left, args.right),
+                    indent=2,
+                )
+            )
+            return 0
+
         _, task = load_task(args.workspace, args.task)
+        if args.command in ("compile", "hypothesis"):
+            errors = validate_task(args.workspace, task)
+            if errors:
+                raise ContractError("invalid task contract: " + "; ".join(errors))
+            if args.command == "compile":
+                if not args.candidate:
+                    raise ContractError("compile capture requires --candidate")
+                hypothesis_evidence.require(
+                    args.workspace, task, args.candidate, "compile"
+                )
+
+                def execute_compile(command):
+                    if task.get("execution", {}).get("transport", "local") == "ssh":
+                        shell, script = remote_command_script(task, command)
+                        return ControlledSSH(task).run_script(
+                            script, shell=shell, capture=True
+                        )
+                    shell, script = _command_script(task, command)
+                    return subprocess.run(
+                        [shell, "-lc", script],
+                        cwd=args.workspace,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                    )
+
+                result = compiler_evidence.capture(
+                    args.workspace, task, args.candidate, execute_compile
+                )
+            elif args.action == "register":
+                if not args.spec:
+                    raise ContractError("hypothesis register requires --spec")
+                result = hypothesis_evidence.register(
+                    args.workspace, task, json.loads(args.spec.read_text())
+                )
+            else:
+                if not args.candidate or not args.capture:
+                    raise ContractError(
+                        "hypothesis assess requires --candidate and --capture"
+                    )
+                result = hypothesis_evidence.assess(
+                    args.workspace, task, args.candidate, args.capture
+                )
+            print(json.dumps(result, indent=2, allow_nan=False))
+            return 0
+        if args.command in ("measure", "confirm"):
+            errors = validate_task(args.workspace, task)
+            if errors:
+                raise ContractError("invalid task contract: " + "; ".join(errors))
+            if args.command == "measure":
+                result = measurement.measure(
+                    args.workspace,
+                    task,
+                    args.candidate,
+                    lambda section, candidate: run_contract_command(
+                        args.workspace, task, section, candidate=candidate, capture=True
+                    ),
+                    evaluate_goal,
+                )
+            else:
+                result = confirm_candidate(args.workspace, task, args.candidate)
+            print(json.dumps(result, indent=2, allow_nan=False))
+            return 0
+        if args.command == "evaluate":
+            evaluation, errors = evaluate_goal(args.workspace, task, args.candidate)
+            if errors:
+                raise ContractError(
+                    "invalid benchmark evidence:\n- " + "\n- ".join(errors)
+                )
+            print(json.dumps(evaluation, indent=2, allow_nan=False))
+            return 0 if evaluation["target_reached"] else 1
         if args.command == "strategy":
             errors = validate_task(args.workspace, task)
             if errors:
@@ -1569,7 +2389,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ContractError("invalid task contract:\n- " + "\n- ".join(errors))
             print(
                 json.dumps(
-                    discover_analysis_tools(args.workspace, task, args.ssh_bin), indent=2
+                    discover_analysis_tools(args.workspace, task, args.ssh_bin),
+                    indent=2,
                 )
             )
             return 0
@@ -1579,7 +2400,9 @@ def main(argv: list[str] | None = None) -> int:
                 raise ContractError("invalid task contract:\n- " + "\n- ".join(errors))
             assessment = assess_tle(args.workspace, task, args.ssh_bin)
             print(json.dumps(assessment, indent=2))
-            required = (task.get("analysis") or {}).get("extensions", {}).get("tle") == "required"
+            required = (task.get("analysis") or {}).get("extensions", {}).get(
+                "tle"
+            ) == "required"
             return 2 if required and assessment.get("status") != "available" else 0
         if args.command == "remote":
             errors = validate_task(args.workspace, task)
@@ -1594,7 +2417,9 @@ def main(argv: list[str] | None = None) -> int:
                 changed = push_allowed(args.workspace, task, args.ssh_bin)
                 print(json.dumps({"pushed": changed}, indent=2))
             elif args.action == "list-wiki":
-                print(json.dumps({"files": list_tle_wiki(task, args.ssh_bin)}, indent=2))
+                print(
+                    json.dumps({"files": list_tle_wiki(task, args.ssh_bin)}, indent=2)
+                )
             else:
                 if not args.path:
                     raise ContractError("remote read-wiki requires --path")
@@ -1626,6 +2451,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.section,
                 tool=args.tool,
                 variant=args.variant,
+                candidate=args.candidate,
             )
             return result.returncode
         if args.command == "optimize":
@@ -1636,7 +2462,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.sandbox,
                 args.dry_run,
             )
-    except (ContractError, SSHAdapterError, OSError, yaml.YAMLError) as error:
+    except (
+        ContractError,
+        evidence.EvidenceError,
+        SSHAdapterError,
+        OSError,
+        yaml.YAMLError,
+        json.JSONDecodeError,
+    ) as error:
         print(f"kernelpilot: {error}", file=sys.stderr)
         return 2
     raise AssertionError("unreachable")

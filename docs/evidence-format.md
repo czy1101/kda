@@ -60,3 +60,39 @@ best correct candidate, a structured `stop_reason`, every workflow issue, the
 remaining performance gap, and whether rollback restored the best candidate.
 Reference parity, no actionable bottleneck, exhausted backend capabilities, and
 configured budget exhaustion are honest stop outcomes rather than promotions.
+
+## Validate performance summaries
+
+Use `kernelpilot evaluate --candidate <id>` to check workload coverage, numeric
+validity, consistent units and the configured performance target. It returns
+JSON and exits 0 for target reached, 1 for target not reached, or 2 for invalid
+evidence. This does not replace correctness or source provenance checks. See
+[evidence-driven optimization](evidence-driven-optimization.md) for the ledger
+contract and remaining enforcement work.
+
+## Source-bound candidate runs
+
+New best promotion requires `run correctness --candidate <id>` followed by
+`run benchmark --candidate <id>` (and bound generalization when configured).
+The harness must emit the current runner-provided run_id and candidate in its
+contracted CSV. See [source-bound evidence](source-bound-evidence.md) for the
+exact migration steps, enforced checks and limitations.
+
+## Measurement reliability follow-up
+
+The optional `measurement` policy now adds a frozen initial-implementation
+baseline, raw sample validation, repeated invocations, device/environment guards
+and interleaved confirmation before best promotion. See
+[measurement reliability](measurement-reliability.md) for the current protocol
+and limitations; this supersedes earlier notes describing that layer as pending.
+It remains opt-in for legacy tasks and requires harness migration in a new round.
+
+
+## MetaX profile evidence
+
+The optional `adapter: metax` connects mcProfiler counters and mcTracer timelines
+to controlled execution with unique, source-bound raw and normalized evidence.
+Use `profile-report --run <id>` for offline artifact verification. Discovery,
+capture validation and analysis capabilities are distinct; profiler data is
+never promotion benchmark data. See [MetaX profiling](metax-profiling.md) for
+the task contract, guard, capture boundaries, export formats and limitations.
