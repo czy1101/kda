@@ -12,6 +12,33 @@ If you have an idea or need help preparing the files, [discuss a kernel idea](ht
 
 Changes to the active issue form belong on `main`, and website changes belong on `pages`.
 
+## Development checks
+
+Use Python 3.10 or later and initialize the pinned skill submodules before
+running the CPU-only suite:
+
+```bash
+git submodule update --init --recursive
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m unittest discover -s tests -v
+python -m ruff check scripts tests --select E9,F63,F7,F82
+git diff --check
+```
+
+The tests use synthetic workloads and fake profiler executables; they require
+Bash but no GPU, vendor profiler, remote server or credentials. Submodules are
+required because backend validation checks the referenced skills. Do not relax
+those assertions to compensate for an incomplete checkout.
+
+Keep new Python code formatted with Black (88 columns). Avoid reformatting
+unrelated legacy code in a functional change. Freeze task-specific harnesses and
+keep private paths, operator results and generated profiler exports outside KDA.
+When changing evidence contracts, include both successful and rejected cases,
+document compatibility requirements, and distinguish diagnostic observations
+from benchmark-approved improvements.
+
 ## Licensing
 
 By submitting a contribution, you agree that it may be distributed under the applicable terms in [LICENSE](LICENSE):
