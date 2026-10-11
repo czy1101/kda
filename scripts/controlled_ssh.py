@@ -173,7 +173,7 @@ class ControlledSSH:
             (
                 "set -euo pipefail",
                 f"cd -- {workspace}",
-                f"test -d -- {parent}",
+                f"test -d {parent}",
                 "tmp=$(mktemp .kernelpilot-upload.XXXXXX)",
                 "trap 'rm -f -- \"$tmp\"' EXIT",
                 "cat > \"$tmp\"",
