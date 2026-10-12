@@ -61,6 +61,37 @@ benchmark:
   shapes:
     - <shape that must be covered, e.g. 1x8192x128>
 
+# Optional PR-oriented quality gates. Uncomment and fill this block when the
+# repository has a public API, layered modules, an operator registry, pytest
+# markers, and a unified operator dispatcher. `kernelpilot run quality` runs
+# all five commands and records runs/quality.json.
+# quality:
+#   required: true
+#   public_api:
+#     command: <import and public-API verification command>
+#     import: <optional import expression>
+#     exports:
+#       - <package.public_operator>
+#   module_layers:
+#     command: <API/kernel/test/benchmark layering check>
+#     api_paths: []
+#     implementation_paths: []
+#     test_paths: []
+#     benchmark_paths: []
+#   naming:
+#     op_name: <stable_operator_id>
+#     marker: <stable_operator_id>
+#     registry:
+#       path: <relative operator registry path>
+#       id: <stable_operator_id>
+#     command: <name and registry consistency check>
+#   pytest:
+#     marker: <stable_operator_id>
+#     command: <pytest collection or correctness command for the marker>
+#   dispatch:
+#     operator_id: <stable_operator_id>
+#     command: <unified dispatcher command using the operator id>
+
 # Keep the implementation general unless the task explicitly permits an
 # algorithmically justified shape-dependent path. Do not expose private guard
 # shapes when the evaluator intentionally keeps them hidden.

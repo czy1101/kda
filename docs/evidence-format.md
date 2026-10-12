@@ -1,4 +1,4 @@
-# KernelPilot evidence format
+699696# KernelPilot evidence format
 
 KernelPilot uses plain JSONL and CSV so a run can be audited without a service
 or database.
@@ -30,6 +30,21 @@ from the comparator selected by `baseline.name` in the task contract, such as
 `goal.aggregation`; it does not trust a speedup written by the agent. The
 aggregation policy may be `sum_ratio`, `mean_ratio`, `geomean_ratio`, `all`, or
 `any`; it is selected per task rather than imposed globally.
+
+## PR quality gates
+
+When a task declares `quality`, `kernelpilot run quality` executes five
+task-local commands and writes `runs/quality.json`. The checks are:
+
+- `public_api`: import/export and public API behavior;
+- `module_layers`: separation of API, implementation, tests, and benchmarks;
+- `naming`: one stable operator name shared by the API, pytest marker, and registry id;
+- `pytest`: collection or execution of the declared marker;
+- `dispatch`: lookup through the repository's unified operator dispatcher.
+
+The commands remain repository-specific, while the contract enforces that all
+five checks are declared consistently. A required quality run must have
+`status: pass` before the final evidence can be verified.
 
 ## Candidate ledger
 

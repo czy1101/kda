@@ -25,6 +25,15 @@
 - Guard-shape or held-out evidence:
 - Shape-dependent logic and algorithmic justification:
 
+## PR quality gates
+
+- Public API import/export result:
+- Module-layering result:
+- Operator name and registry-id result:
+- pytest marker collection result:
+- Unified dispatch result:
+- Quality evidence: `runs/quality.json`
+
 ## Candidate summary
 
 List every candidate, including rejected and failed attempts, with its

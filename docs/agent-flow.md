@@ -23,9 +23,10 @@ MLSys-style benchmark work is one possible application of this loop. The same fl
 5. Convert the draft into an executable plan.
 6. Implement the first candidate.
 7. Validate correctness.
-8. Measure the target metric when applicable.
-9. Record evidence and decide whether to keep, revise, or reject the candidate.
-10. Repeat until the promotion criteria are met or the remaining blockers are explicit.
+8. Run configured PR quality gates when present.
+9. Measure the target metric when applicable.
+10. Record evidence and decide whether to keep, revise, or reject the candidate.
+11. Repeat until the promotion criteria are met or the remaining blockers are explicit.
 
 For SSH tasks, materialize allow-listed source into `remote-worktree/` before
 inspection, deploy a candidate through the adapter before correctness, and use
@@ -46,6 +47,13 @@ Each task should state:
 - Evaluation command, if different from validation.
 - Promotion criteria.
 
+An optional `quality` block can make repository-facing PR contracts executable.
+It runs five independent gates: public API import/export, module layering,
+operator name and registry consistency, pytest marker collection, and unified
+operator dispatch. These checks are task-local because repositories use
+different package layouts and registry formats; their commands run in the same
+environment as correctness and benchmark.
+
 ## Evidence Records
 
 Use simple files in the task workspace:
@@ -56,6 +64,8 @@ Use simple files in the task workspace:
 - `candidates.jsonl` for candidate names, parent links, and status.
 - `profile/` for profiler output or report summaries.
 - `runs/analysis-capabilities.json` for live backend-tool discovery evidence.
+- `runs/quality.json` for configured public API, module-layer, naming/registry,
+  pytest-marker, and unified-dispatch checks.
 - `runs/` or `outputs/` for generated artifacts.
 
 The exact format is less important than consistency. A future reader should be able to reconstruct what changed, what was measured, and why a candidate was promoted.

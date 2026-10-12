@@ -107,3 +107,9 @@ A backend extension is ready when its profile validates, its required skills
 validate, a task can select it without prompt edits, and at least one complete
 run proves correctness, scope enforcement, benchmark aggregation, rollback,
 and evidence generation.
+
+The Hygon gfx936 example is implemented by
+`backends/hygon-gfx936.yaml` and `skills/hygon-profile/SKILL.md`. It uses
+`rocprofv2` for kernel traces and structured CSV, `hipprof` for timeline
+fallbacks, and keeps `rocm-smi`/`rocminfo` as device-state probes rather than
+pretending that they are kernel profilers.

@@ -163,6 +163,108 @@ properties:
           type: string
         description: Shapes that must be covered by the measurement.
 
+  quality:
+    type: object
+    additionalProperties: false
+    required: [public_api, module_layers, naming, pytest, dispatch]
+    description: >
+      Optional PR-oriented quality gates. When present, all five checks make
+      the public API, module layering, operator naming/registry, pytest marker,
+      and unified dispatch contract explicit. Each command must be runnable in
+      the declared task environment and should fail when the contract is not
+      satisfied.
+    properties:
+      required:
+        type: boolean
+        default: true
+        description: Whether a failed quality gate blocks the optimization loop.
+      public_api:
+        type: object
+        additionalProperties: false
+        required: [command]
+        properties:
+          command:
+            type: string
+            description: Command that imports and verifies the public API.
+          import:
+            type: string
+            description: Optional human-readable import expression under test.
+          exports:
+            type: array
+            items:
+              type: string
+            description: Optional expected public symbols or module exports.
+      module_layers:
+        type: object
+        additionalProperties: false
+        required: [command]
+        properties:
+          command:
+            type: string
+            description: Command that checks API/kernel/test/benchmark layering.
+          api_paths:
+            type: array
+            items: {type: string}
+          implementation_paths:
+            type: array
+            items: {type: string}
+          test_paths:
+            type: array
+            items: {type: string}
+          benchmark_paths:
+            type: array
+            items: {type: string}
+      naming:
+        type: object
+        additionalProperties: false
+        required: [op_name, marker, registry, command]
+        properties:
+          op_name:
+            type: string
+            pattern: "^[A-Za-z][A-Za-z0-9_]*$"
+            description: Stable public operator identifier.
+          marker:
+            type: string
+            pattern: "^[A-Za-z][A-Za-z0-9_]*$"
+            description: pytest marker and unified scheduler name.
+          registry:
+            type: object
+            additionalProperties: false
+            required: [path, id]
+            properties:
+              path:
+                type: string
+                description: Repository-relative operator registry path.
+              id:
+                type: string
+                description: Registry identifier that must equal op_name.
+          command:
+            type: string
+            description: Command that verifies names and registry contents.
+      pytest:
+        type: object
+        additionalProperties: false
+        required: [marker, command]
+        properties:
+          marker:
+            type: string
+            pattern: "^[A-Za-z][A-Za-z0-9_]*$"
+            description: Marker that must be collected by the test suite.
+          command:
+            type: string
+            description: pytest collection/execution command for the operator marker.
+      dispatch:
+        type: object
+        additionalProperties: false
+        required: [operator_id, command]
+        properties:
+          operator_id:
+            type: string
+            description: Identifier accepted by the repository's unified dispatcher.
+          command:
+            type: string
+            description: Command that dispatches the operator by operator_id.
+
   generalization:
     type: object
     additionalProperties: false

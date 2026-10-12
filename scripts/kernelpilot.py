@@ -41,6 +41,7 @@ EVIDENCE_DIRS = ("docs", "runs", "outputs", "profile")
 ANALYSIS_CAPABILITIES = Path("runs/analysis-capabilities.json")
 ANALYSIS_STRATEGY = Path("runs/analysis-strategy.json")
 TLE_ASSESSMENT = Path("runs/tle-assessment.json")
+QUALITY_EVIDENCE = Path("runs/quality.json")
 CHECKPOINT_ROOT = Path(".kernelpilot/checkpoints")
 REQUIRED_TOP_LEVEL = (
     "version",
@@ -56,6 +57,83 @@ REQUIRED_TOP_LEVEL = (
 
 class ContractError(ValueError):
     pass
+
+
+QUALITY_CHECK_NAMES = ("public_api", "module_layers", "naming", "pytest", "dispatch")
+
+
+def _validate_quality(task: dict[str, Any]) -> list[str]:
+    """Validate the optional PR-oriented quality contract."""
+    quality = task.get("quality")
+    if quality is None:
+        return []
+    errors: list[str] = []
+    if not isinstance(quality, dict):
+        return ["quality must be a mapping"]
+    required = quality.get("required", True)
+    if not isinstance(required, bool):
+        errors.append("quality.required must be boolean")
+
+    for name in QUALITY_CHECK_NAMES:
+        config = quality.get(name)
+        if not isinstance(config, dict):
+            errors.append(f"quality.{name} must be a mapping")
+            continue
+        command = config.get("command")
+        if not isinstance(command, str) or not command.strip():
+            errors.append(f"quality.{name}.command must be a non-empty string")
+
+    naming = quality.get("naming")
+    if isinstance(naming, dict):
+        op_name = naming.get("op_name")
+        marker = naming.get("marker")
+        registry = naming.get("registry")
+        if not isinstance(op_name, str) or not op_name.strip():
+            errors.append("quality.naming.op_name must be a non-empty string")
+        if not isinstance(marker, str) or not marker.strip():
+            errors.append("quality.naming.marker must be a non-empty string")
+        if isinstance(op_name, str) and isinstance(marker, str) and op_name != marker:
+            errors.append("quality.naming.marker must equal quality.naming.op_name")
+        if not isinstance(registry, dict):
+            errors.append("quality.naming.registry must be a mapping")
+        else:
+            registry_path = registry.get("path")
+            registry_id = registry.get("id")
+            if not isinstance(registry_path, str) or not registry_path.strip():
+                errors.append("quality.naming.registry.path must be a non-empty string")
+            elif (
+                PurePosixPath(registry_path).is_absolute()
+                or ".." in PurePosixPath(registry_path).parts
+            ):
+                errors.append("quality.naming.registry.path must stay inside the workspace")
+            if not isinstance(registry_id, str) or not registry_id.strip():
+                errors.append("quality.naming.registry.id must be a non-empty string")
+            if isinstance(op_name, str) and isinstance(registry_id, str) and op_name != registry_id:
+                errors.append("quality.naming.registry.id must equal quality.naming.op_name")
+            allowed = (task.get("constraints") or {}).get("allowed_paths") or []
+            if isinstance(registry_path, str) and allowed and registry_path not in allowed:
+                errors.append("quality.naming.registry.path must appear in constraints.allowed_paths")
+
+    pytest_config = quality.get("pytest")
+    if isinstance(pytest_config, dict):
+        marker = pytest_config.get("marker")
+        naming = quality.get("naming")
+        naming_marker = naming.get("marker") if isinstance(naming, dict) else None
+        if not isinstance(marker, str) or not marker.strip():
+            errors.append("quality.pytest.marker must be a non-empty string")
+        elif isinstance(naming_marker, str) and marker != naming_marker:
+            errors.append("quality.pytest.marker must equal quality.naming.marker")
+
+    dispatch = quality.get("dispatch")
+    if isinstance(dispatch, dict):
+        operator_id = dispatch.get("operator_id")
+        naming = quality.get("naming")
+        op_name = naming.get("op_name") if isinstance(naming, dict) else None
+        if not isinstance(operator_id, str) or not operator_id.strip():
+            errors.append("quality.dispatch.operator_id must be a non-empty string")
+        elif isinstance(op_name, str) and operator_id != op_name:
+            errors.append("quality.dispatch.operator_id must equal quality.naming.op_name")
+    return errors
 
 
 def _utc_now() -> str:
@@ -631,6 +709,8 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
         if not isinstance(command, str) or not command.strip():
             errors.append(f"{section}.command must be a non-empty string")
 
+    errors.extend(_validate_quality(task))
+
     baseline = task.get("baseline") or {}
     if not isinstance(baseline.get("name"), str) or not baseline.get("name", "").strip():
         errors.append("baseline.name must be a non-empty comparator name")
@@ -763,6 +843,78 @@ def _command_script(task: dict[str, Any], command: str) -> tuple[str, str]:
     return shell, "\n".join(parts)
 
 
+def run_explicit_command(
+    workspace: Path,
+    task: dict[str, Any],
+    command: str,
+    *,
+    capture: bool = False,
+    ssh_bin: str = "ssh",
+) -> subprocess.CompletedProcess[str]:
+    """Run a task-declared command with the task environment and transport."""
+    execution = task.get("execution") or {"transport": "local"}
+    if execution.get("transport", "local") == "ssh":
+        shell, script = remote_command_script(task, command)
+        return ControlledSSH(task, ssh_bin=ssh_bin).run_script(
+            script, shell=shell, capture=capture
+        )
+    shell, script = _command_script(task, command)
+    return subprocess.run(
+        [shell, "-lc", script],
+        cwd=workspace,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=capture,
+        check=False,
+    )
+
+
+def run_quality_checks(
+    workspace: Path,
+    task: dict[str, Any],
+    *,
+    ssh_bin: str = "ssh",
+) -> dict[str, Any]:
+    """Run configured public-API and PR integration quality gates."""
+    quality = task.get("quality")
+    if quality is None:
+        result = {
+            "status": "skipped",
+            "required": False,
+            "checks": {},
+            "timestamp": _utc_now(),
+        }
+    else:
+        checks: dict[str, Any] = {}
+        for name in QUALITY_CHECK_NAMES:
+            config = quality[name]
+            completed = run_explicit_command(
+                workspace,
+                task,
+                config["command"],
+                capture=True,
+                ssh_bin=ssh_bin,
+            )
+            checks[name] = {
+                "command": config["command"],
+                "status": "pass" if completed.returncode == 0 else "fail",
+                "returncode": completed.returncode,
+                "stdout": completed.stdout or "",
+                "stderr": completed.stderr or "",
+            }
+        result = {
+            "status": "pass" if all(item["status"] == "pass" for item in checks.values()) else "fail",
+            "required": bool(quality.get("required", True)),
+            "checks": checks,
+            "timestamp": _utc_now(),
+        }
+    output = workspace / QUALITY_EVIDENCE
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
 def run_contract_command(
     workspace: Path,
     task: dict[str, Any],
@@ -804,17 +956,11 @@ def run_contract_command(
         config = task.get(section)
         if not isinstance(config, dict) or not config.get("command"):
             raise ContractError(f"task has no {section}.command")
-    execution = task.get("execution") or {"transport": "local"}
-    if execution.get("transport", "local") == "ssh":
-        shell, script = remote_command_script(task, config["command"])
-        return ControlledSSH(task).run_script(script, shell=shell, capture=capture)
-    shell, script = _command_script(task, config["command"])
-    return subprocess.run(
-        [shell, "-lc", script],
-        cwd=workspace,
-        text=True,
-        capture_output=capture,
-        check=False,
+    return run_explicit_command(
+        workspace,
+        task,
+        config["command"],
+        capture=capture,
     )
 
 
@@ -1173,6 +1319,25 @@ def verify_evidence(
             errors.append(f"missing or empty evidence file: {relative}")
 
     if task is not None:
+        quality = task.get("quality")
+        if quality is not None and quality.get("required", True):
+            quality_path = workspace / QUALITY_EVIDENCE
+            if not quality_path.is_file() or quality_path.stat().st_size == 0:
+                errors.append(f"missing or empty quality evidence: {QUALITY_EVIDENCE}")
+            else:
+                try:
+                    quality_result = json.loads(quality_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as error:
+                    errors.append(f"invalid quality evidence: {error}")
+                else:
+                    checks = quality_result.get("checks") or {}
+                    checks_pass = all(
+                        isinstance(checks.get(name), dict)
+                        and checks[name].get("status") == "pass"
+                        for name in QUALITY_CHECK_NAMES
+                    )
+                    if quality_result.get("status") != "pass" or not checks_pass:
+                        errors.append("required quality gates did not pass")
         tle_policy = (
             task.get("extensions", {}).get("tle", {}).get("policy", "disabled")
         )
@@ -1301,6 +1466,7 @@ by the optimization prompt.
 Run every contracted command through the environment-aware wrapper:
 - discover backend analysis tools: python3 {driver} discover-tools --workspace {workspace}
 - assess TLE only when enabled: python3 {driver} assess-tle --workspace {workspace}
+- quality gates when configured: python3 {driver} run quality --workspace {workspace}
 - correctness: python3 {driver} run correctness --workspace {workspace}
 - baseline, when configured: python3 {driver} run baseline --workspace {workspace}
 - benchmark: python3 {driver} run benchmark --workspace {workspace}
@@ -1497,11 +1663,12 @@ def main(argv: list[str] | None = None) -> int:
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument(
-        "section", choices=("correctness", "baseline", "benchmark", "profile")
+        "section", choices=("quality", "correctness", "baseline", "benchmark", "profile")
     )
     run_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     run_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
     run_parser.add_argument("--tool")
+    run_parser.add_argument("--ssh-bin", default="ssh")
     run_parser.add_argument(
         "--variant", choices=("candidate", "reference", "export"), default="candidate"
     )
@@ -1620,6 +1787,13 @@ def main(argv: list[str] | None = None) -> int:
             print("task contract and environment: valid")
             return 0
         if args.command == "run":
+            errors = validate_task(args.workspace, task)
+            if errors:
+                raise ContractError("invalid task contract:\n- " + "\n- ".join(errors))
+            if args.section == "quality":
+                result = run_quality_checks(args.workspace, task, ssh_bin=args.ssh_bin)
+                print(json.dumps(result, indent=2))
+                return 0 if result["status"] in ("pass", "skipped") or not result["required"] else 1
             result = run_contract_command(
                 args.workspace,
                 task,

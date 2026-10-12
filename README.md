@@ -24,6 +24,7 @@ This repository documents an early research prototype and remains under active d
 | `schemas/backend.schema.yaml` | Contract for backend-to-skill routing profiles. |
 | `docs/evidence-format.md` | Canonical benchmark and candidate ledger format. |
 | `docs/backend-extensions.md` | How to add a chip backend without growing prompts. |
+| `docs/hygon-profile.md` | Hygon gfx936/BW profiling workflow using rocprofv2 and hipprof. |
 | `backends/` | Backend/architecture matching and stage-specific skill routing. |
 | `templates/task.yaml` | Fill-in task contract. |
 | `templates/operator-workspace/` | Files to drop into an operator repository. |
@@ -82,6 +83,7 @@ ln -sfn "$(pwd)/skills/backend-profiler-discovery" ~/.codex/skills/backend-profi
 ln -sfn "$(pwd)/skills/triton-cuda-optimization" ~/.codex/skills/triton-cuda-optimization
 ln -sfn "$(pwd)/skills/nvidia-profile-comparison" ~/.codex/skills/nvidia-profile-comparison
 ln -sfn "$(pwd)/skills/tle-optimization" ~/.codex/skills/tle-optimization
+ln -sfn "$(pwd)/skills/hygon-profile" ~/.codex/skills/hygon-profile
 ```
 
 Skills are user-level: they become available to every Codex session, not only to
@@ -103,12 +105,20 @@ non-interactive mode, captures JSONL events, checks required evidence, and
 rejects runs that modify explicitly forbidden paths. The agent still owns
 optimization judgment; the runner owns reproducibility and gates.
 
+Task contracts may also declare a `quality` block. Its five commands make
+repository PR conventions executable without hard-coding a package layout:
+public API import/export, API/kernel/test/benchmark module layering, stable
+operator name and registry id, pytest marker collection, and unified operator
+dispatch. Results are written to `runs/quality.json`; required failures block
+promotion.
+
 ```bash
 # Validate the task and its environment preflight.
 python3 <kda>/scripts/kernelpilot.py validate --workspace <operator-repo>
 
 # Run a contracted command with the exact environment setup.
 python3 <kda>/scripts/kernelpilot.py run correctness --workspace <operator-repo>
+python3 <kda>/scripts/kernelpilot.py run quality     --workspace <operator-repo>
 
 # Discover backend tools and inspect the selected analysis route.
 python3 <kda>/scripts/kernelpilot.py discover-tools --workspace <operator-repo>
@@ -135,6 +145,7 @@ python3 <kda>/scripts/kernelpilot.py remote pull    --workspace <control-workspa
 # Codex edits <control-workspace>/remote-worktree/<allowed-path>
 python3 <kda>/scripts/kernelpilot.py remote push    --workspace <control-workspace>
 python3 <kda>/scripts/kernelpilot.py run correctness --workspace <control-workspace>
+python3 <kda>/scripts/kernelpilot.py run quality     --workspace <control-workspace>
 python3 <kda>/scripts/kernelpilot.py run benchmark   --workspace <control-workspace>
 # When TLE is enabled, inspect its Wiki through the read-only adapter.
 python3 <kda>/scripts/kernelpilot.py remote list-wiki --workspace <control-workspace>

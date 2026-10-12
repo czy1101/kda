@@ -82,6 +82,11 @@ diagnosed bottleneck needs an operation neither Triton nor the available TLE
 API can express, report the specific missing primitive as an extension request
 instead of inventing an API.
 
+For Hygon gfx936/BW tasks, use the dedicated
+[Hygon profiling workflow](hygon-profile.md). It routes kernel traces to
+`rocprofv2`, timeline questions to `hipprof`, and uses `rocm-smi`/`rocminfo`
+only for device-state and architecture evidence.
+
 For SSH tasks, use `kernelpilot remote list-wiki` and `remote read-wiki --path`
 to read the configured Wiki directly through the controlled adapter. These
 operations cannot write Wiki content and reject paths outside the configured

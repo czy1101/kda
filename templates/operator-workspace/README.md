@@ -36,6 +36,7 @@ Expected layout after the first rounds:
   runs/
     candidates.jsonl
     benchmark.csv
+    quality.json             # when PR quality gates are configured
   profile/
 ```
 

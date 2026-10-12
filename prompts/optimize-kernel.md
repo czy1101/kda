@@ -31,17 +31,25 @@ and recovery in `runs/stage-events.jsonl` and the final report.
 1. Inspect the operator and reference, then write `docs/draft.md` and
    `docs/plan.md` before implementation.
 2. Establish correctness and the configured original/reference baseline, and
-   record the baseline candidate before evaluating optimized candidates.
+   run the configured PR quality gates, then record the baseline candidate
+   before evaluating optimized candidates.
 3. Diagnose the current bottleneck from source and measurements. Profile only
    when it can distinguish concrete competing hypotheses.
 4. State one falsifiable hypothesis and implement one coherent candidate.
-5. Run correctness. Benchmark only correct candidates across the full required
-   shape set, then run configured generalization checks.
+5. Run correctness and, when `.kernelpilot/task.yaml` contains `quality`, run
+   `kernelpilot.py run quality`. Benchmark only candidates that pass both gates
+   across the full required shape set, then run configured generalization checks.
 6. Record every kept, revised, rejected, failed, or regressed candidate with a
    reason and rollback result. Save the checkpoint for a correct improved
    candidate, then evaluate the configured goal from raw benchmark records.
 7. Continue until the target or a configured evidence-backed stop condition is
    reached. A truthful target-not-reached result is acceptable.
+
+When a `quality` block is present, keep one stable operator identity across the
+public API, `op_name`, pytest marker, registry id, and unified dispatcher. Keep
+API/launcher code separate from kernel implementation, tests, and benchmark
+adapters. Do not bypass a failed quality gate by weakening the command or
+changing the registry during an optimization round.
 
 The task's metric and direction are authoritative. Do not assume the metric is
 latency: minimized and maximized metrics use the same evidence gates. Exactly
@@ -109,4 +117,4 @@ the structured result required by `schemas/run-result.schema.json`. The report
 must identify the restored/deployed best correct candidate, comparator, metric,
 per-shape and aggregate result, correctness, generalization evidence, remaining
 gap, stop reason, rejected candidates, unavailable capabilities, TLE assessment,
-and every workflow error or recovery in execution order.
+quality-gate results, and every workflow error or recovery in execution order.

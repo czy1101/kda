@@ -28,6 +28,9 @@ This repository defines a reusable workflow for GPU kernel optimization.
     checkpoint. KernelPilot restores that checkpoint when the run exits.
 15. Keep metric handling generic: the task's metric, direction, unit, comparator,
     aggregation, and target mode define promotion.
+16. When a task declares PR quality gates, require a passing public API,
+    module-layer, naming/registry, pytest-marker, and unified-dispatch check
+    before benchmarking or promoting a candidate.
 
 ## Optimization loop
 
@@ -36,15 +39,16 @@ For every kernel optimization task:
 1. Read the task contract.
 2. Inspect the implementation and reference.
 3. Verify correctness.
-4. Establish baseline performance.
-5. Profile the current bottleneck when needed.
-6. Write an optimization hypothesis.
-7. Implement one coherent candidate.
-8. Run correctness.
-9. Run benchmark.
-10. Record evidence.
-11. Keep, revise, or reject the candidate.
-12. Repeat until the target or stop condition is reached.
+4. Run configured PR quality gates.
+5. Establish baseline performance.
+6. Profile the current bottleneck when needed.
+7. Write an optimization hypothesis.
+8. Implement one coherent candidate.
+9. Run correctness and configured PR quality gates.
+10. Run benchmark.
+11. Record evidence.
+12. Keep, revise, or reject the candidate.
+13. Repeat until the target or stop condition is reached.
 
 ## Repository rules
 
@@ -67,6 +71,7 @@ For every kernel optimization task:
 | Local versus execution-only SSH placement | `.kernelpilot/task.yaml` `execution` block |
 | Remote command dispatch and source synchronization | `scripts/controlled_ssh.py` |
 | "Which candidate is fastest right now" | `runs/candidates.jsonl`, `runs/benchmark.csv` |
+| Public API, module layers, naming/registry, pytest marker, and unified dispatch | `quality` in `.kernelpilot/task.yaml`, `runs/quality.json` |
 | Which stage the task is currently in | the task workspace, not this repository |
 
 The reusable loop is defined here; task-specific prompts, harnesses, and results

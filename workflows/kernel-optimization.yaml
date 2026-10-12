@@ -35,6 +35,7 @@ evidence:
   low_level_analysis: profile/low-level-analysis.md
   extension_analysis: docs/extension-analysis.md
   tle_assessment: runs/tle-assessment.json
+  quality: runs/quality.json
 
 stages:
 
@@ -83,7 +84,13 @@ stages:
 
   - id: correctness
     action: run_correctness
+    on_pass: quality
+    on_fail: finalize_without_target
+
+  - id: quality
+    action: run_configured_pr_quality_gates
     on_pass: baseline
+    on_skip: baseline
     on_fail: finalize_without_target
 
   - id: baseline
@@ -191,7 +198,13 @@ stages:
 
   - id: correctness_candidate
     action: run_correctness
+    on_pass: quality_candidate
+    on_fail: reject_candidate
+
+  - id: quality_candidate
+    action: run_configured_pr_quality_gates
     on_pass: benchmark_candidate
+    on_skip: benchmark_candidate
     on_fail: reject_candidate
 
   - id: benchmark_candidate

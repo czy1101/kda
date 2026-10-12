@@ -62,6 +62,79 @@ class KernelPilotTests(unittest.TestCase):
         self.assertEqual(shell, "bash")
         self.assertIn("export KDA_SENTINEL=ready", script)
 
+    def test_quality_contract_requires_consistent_operator_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+            task = valid_task()
+            task["target"] = {"backend": "test", "device": "test"}
+            task["quality"] = {
+                "required": True,
+                "public_api": {"command": "true"},
+                "module_layers": {"command": "true"},
+                "naming": {
+                    "op_name": "example_attention",
+                    "marker": "example_attention",
+                    "registry": {"path": "operators.yaml", "id": "example_attention"},
+                    "command": "true",
+                },
+                "pytest": {"marker": "example_attention", "command": "true"},
+                "dispatch": {"operator_id": "example_attention", "command": "true"},
+            }
+            task["constraints"]["allowed_paths"].append("operators.yaml")
+            self.assertEqual(kernelpilot.validate_task(workspace, task), [])
+            task["quality"]["dispatch"]["operator_id"] = "other_attention"
+            self.assertIn(
+                "quality.dispatch.operator_id must equal quality.naming.op_name",
+                kernelpilot.validate_task(workspace, task),
+            )
+
+    def test_quality_checks_write_machine_readable_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            task = valid_task()
+            task["quality"] = {
+                "required": True,
+                "public_api": {"command": "true"},
+                "module_layers": {"command": "true"},
+                "naming": {
+                    "op_name": "example_attention",
+                    "marker": "example_attention",
+                    "registry": {"path": "operators.yaml", "id": "example_attention"},
+                    "command": "true",
+                },
+                "pytest": {"marker": "example_attention", "command": "true"},
+                "dispatch": {"operator_id": "example_attention", "command": "true"},
+            }
+            task["constraints"]["allowed_paths"].append("operators.yaml")
+            result = kernelpilot.run_quality_checks(workspace, task)
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(set(result["checks"]), set(kernelpilot.QUALITY_CHECK_NAMES))
+            evidence = json.loads((workspace / "runs/quality.json").read_text(encoding="utf-8"))
+            self.assertEqual(evidence["status"], "pass")
+
+    def test_quality_failure_is_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            task = valid_task()
+            task["quality"] = {
+                "required": True,
+                "public_api": {"command": "false"},
+                "module_layers": {"command": "true"},
+                "naming": {
+                    "op_name": "example_attention",
+                    "marker": "example_attention",
+                    "registry": {"path": "operators.yaml", "id": "example_attention"},
+                    "command": "true",
+                },
+                "pytest": {"marker": "example_attention", "command": "true"},
+                "dispatch": {"operator_id": "example_attention", "command": "true"},
+            }
+            task["constraints"]["allowed_paths"].append("operators.yaml")
+            result = kernelpilot.run_quality_checks(workspace, task)
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(result["checks"]["public_api"]["status"], "fail")
+
     def test_forbidden_change_is_detected(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
@@ -244,6 +317,52 @@ class KernelPilotTests(unittest.TestCase):
             {"profile": "cuda-sm90", "arch": "sm90", "language": "triton"}
         )
         self.assertEqual(kernelpilot.validate_backend_profile(task), [])
+
+    def test_hygon_backend_profile_and_discovery_skills_validate(self):
+        task = valid_task()
+        task["target"] = {
+            "backend": "hygon",
+            "device": "BW",
+            "arch": "gfx936",
+            "profile": "hygon-gfx936",
+            "language": "triton",
+        }
+        self.assertEqual(kernelpilot.validate_backend_profile(task), [])
+
+    def test_hygon_strategy_prefers_rocprofv2_for_kernel_profiles(self):
+        task = valid_task()
+        task["target"] = {
+            "backend": "hygon",
+            "device": "BW",
+            "arch": "gfx936",
+            "profile": "hygon-gfx936",
+            "language": "triton",
+        }
+        task["profile"] = {
+            "tool": "auto",
+            "tools": {
+                "rocprofv2": {
+                    "candidate_command": "trace-candidate",
+                    "reference_command": "trace-reference",
+                },
+                "hipprof": {"candidate_command": "timeline-candidate"},
+            },
+        }
+        task["analysis"] = {
+            "tool_discovery": "auto",
+            "profiling": "auto",
+            "reference_profile_comparison": "auto",
+        }
+        discovery = {
+            "status": "complete",
+            "tools": [
+                {"id": "rocprofv2", "available": True},
+                {"id": "hipprof", "available": True},
+            ],
+        }
+        strategy = kernelpilot.select_analysis_strategy(task, discovery)
+        self.assertEqual(strategy["selected_profiler"], "rocprofv2")
+        self.assertEqual(strategy["route"], "profile_compare")
 
     def test_analysis_strategy_can_disable_profiling(self):
         task = valid_task()
