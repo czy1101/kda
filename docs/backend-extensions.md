@@ -107,3 +107,9 @@ A backend extension is ready when its profile validates, its required skills
 validate, a task can select it without prompt edits, and at least one complete
 run proves correctness, scope enforcement, benchmark aggregation, rollback,
 and evidence generation.
+
+## MUSA mp31
+
+The `musa-mp31` profile routes MTT S5000 Triton tasks without CUDA tool
+assumptions. See [MUSA optimization](musa-optimization.md) for compiler evidence,
+independent numerical diagnosis and stable candidate promotion.

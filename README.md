@@ -24,6 +24,8 @@ This repository documents an early research prototype and remains under active d
 | `schemas/backend.schema.yaml` | Contract for backend-to-skill routing profiles. |
 | `docs/evidence-format.md` | Canonical benchmark and candidate ledger format. |
 | `docs/backend-extensions.md` | How to add a chip backend without growing prompts. |
+| `docs/musa-optimization.md` | MUSA compiler evidence, numerical diagnosis, and stable optimization gates. |
+| `scripts/inspect_musa_artifacts.py` | Read-only SQMMA metadata and LLVM IR cross-check. |
 | `backends/` | Backend/architecture matching and stage-specific skill routing. |
 | `templates/task.yaml` | Fill-in task contract. |
 | `templates/operator-workspace/` | Files to drop into an operator repository. |

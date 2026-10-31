@@ -1,0 +1,37 @@
+version: 1
+id: musa-mp31
+match:
+  backend: musa
+  arches: [mp31]
+  devices: [MTT S5000]
+  languages: [triton]
+skills:
+  always: []
+  when_discovering: [skills/backend-profiler-discovery]
+  when_profiling: []
+  when_researching: []
+analysis_tools:
+  - id: torch-profiler
+    kind: framework-profiler
+    priority: 40
+    probe: python -c "import torch, torch_musa; from torch.profiler import supported_activities; assert torch.musa.is_available(); assert any('MUSA' in str(x) or 'PrivateUse1' in str(x) for x in supported_activities())"
+    version_command: python -c "import torch; print(torch.__version__)"
+    capabilities: [framework_events, timeline]
+capabilities:
+  profilers: []
+  structured_profile_export: false
+  reference_profile_comparison: false
+  ai_profile_fallback: true
+  low_level_artifacts: [triton-ir, llvm-ir]
+extensions:
+  tle:
+    status: experimental
+    required: false
+    skill: skills/tle-optimization
+    project_marker: tle-wiki
+    reason: Use only project-documented APIs verified in the contracted environment.
+notes:
+  - Read docs/musa-optimization.md for compiler and correctness evidence requirements.
+  - MUSA device availability does not prove profiler or SQMMA availability for a kernel.
+  - Do not apply NVIDIA PTX, SASS, SM90 tile sizes, or profiler commands to this target.
+  - Keep environment probes read-only; do not install or replace the compiler during a run.

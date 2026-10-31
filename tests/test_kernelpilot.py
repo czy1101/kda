@@ -255,6 +255,22 @@ class KernelPilotTests(unittest.TestCase):
         strategy = kernelpilot.select_analysis_strategy(task)
         self.assertEqual(strategy["route"], "benchmark_only")
 
+    def test_musa_profile_routes_without_nvidia_assumptions(self):
+        task = valid_task()
+        task["target"] = {
+            "backend": "musa", "device": "MTT S5000",
+            "arch": "mp31", "language": "triton",
+        }
+        profile = kernelpilot._backend_profile(task)
+        self.assertEqual(profile["id"], "musa-mp31")
+        self.assertEqual(kernelpilot.validate_backend_profile(task), [])
+        tools = {tool["id"]: tool for tool in profile["analysis_tools"]}
+        self.assertNotIn("ncu", tools)
+        self.assertNotIn("nsys", tools)
+        self.assertIn("supported_activities", tools["torch-profiler"]["probe"])
+        self.assertIn("llvm-ir", profile["capabilities"]["low_level_artifacts"])
+        self.assertNotIn("sass", profile["capabilities"]["low_level_artifacts"])
+
     def test_unique_backend_profile_is_selected_when_omitted(self):
         profile = kernelpilot._backend_profile(valid_task())
         self.assertEqual(profile["id"], "cuda-sm90")

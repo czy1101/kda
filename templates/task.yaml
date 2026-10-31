@@ -18,9 +18,9 @@ task:
   description: <one-line goal>
 
 target:
-  backend: <cuda|gcu|ascend|kunlun>
+  backend: <cuda|musa|gcu|ascend|kunlun>
   device: <H100|B200|gcu300|...>
-  arch: <sm90|sm100|...>
+  arch: <sm90|sm100|mp31|...>
   profile: <backend-profile-id>     # optional; omit for unique automatic match
   language: <triton|cuda|tilelang|...>
 
