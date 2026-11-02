@@ -139,3 +139,24 @@ def test_generated_index_sections_are_ordered():
     ]
     positions = [text.index(section) for section in sections]
     assert positions == sorted(positions)
+
+
+def _relative_links(path: Path):
+    import re
+
+    pattern = re.compile(r"\]\(([^)\s]+)\)")
+    for match in pattern.finditer(path.read_text(encoding="utf-8")):
+        target = match.group(1)
+        if target.startswith(("http://", "https://", "mailto:", "#")):
+            continue
+        yield target.split("#", 1)[0]
+
+
+@pytest.mark.parametrize("root", NOTE_ROOTS, ids=lambda path: path.parent.name)
+def test_relative_links_resolve(root):
+    missing = []
+    for path in sorted(root.rglob("*.md")):
+        for target in _relative_links(path):
+            if not (path.parent / target).resolve().exists():
+                missing.append(f"{path.relative_to(root)} -> {target}")
+    assert not missing, "dead links:\n" + "\n".join(missing)

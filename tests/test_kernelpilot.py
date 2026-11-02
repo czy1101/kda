@@ -1,5 +1,7 @@
 import importlib.util
+import contextlib
 import csv
+import io
 import hashlib
 import json
 import shlex
@@ -756,6 +758,69 @@ class KernelPilotTests(unittest.TestCase):
             for key, target in stage.items():
                 if key == "next" or key == "otherwise" or key.startswith("on_"):
                     self.assertIn(target, ids, f"{stage['id']}.{key} -> {target}")
+
+    def test_contract_requires_goal_metric_and_valid_stop_block(self):
+        task = valid_task()
+        del task["goal"]["metric"]
+        self.assertIn(
+            "goal.metric must be a non-empty string",
+            kernelpilot.validate_task(Path("."), task),
+        )
+
+        task = valid_task()
+        task["stop"] = {"max_candidates": 0, "target_reached": "yes"}
+        errors = kernelpilot.validate_task(Path("."), task)
+        self.assertIn("stop.max_candidates must be an integer >= 1", errors)
+        self.assertIn("stop.target_reached must be boolean", errors)
+
+    def test_contract_validates_target_benchmark_and_reference(self):
+        task = valid_task()
+        task["target"]["device"] = ""
+        task["benchmark"]["warmup"] = "20"
+        task["benchmark"]["shapes"] = [""]
+        task["reference"] = {"path": ""}
+        errors = kernelpilot.validate_task(Path("."), task)
+        self.assertIn("target.device must be a non-empty string", errors)
+        self.assertIn("benchmark.warmup must be an integer >= 0", errors)
+        self.assertIn("benchmark.shapes must be a list of non-empty strings", errors)
+        self.assertIn("reference.path must be a non-empty string when configured", errors)
+
+    def test_contract_reports_wrong_section_types_instead_of_raising(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+            task = valid_task()
+            task["constraints"] = "kernel.py"
+            task["goal"] = "latency"
+            task["stop"] = 3
+            errors = kernelpilot.validate_task(workspace, task)
+        self.assertIn("constraints must be a mapping", errors)
+        self.assertIn("goal must be a mapping", errors)
+        self.assertIn("stop must be a mapping", errors)
+
+    def test_verify_uses_the_requested_task_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / ".kernelpilot").mkdir()
+            (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+            task = valid_task()
+            task["analysis"] = {"extensions": {"tle": "required"}}
+            (workspace / ".kernelpilot/custom.yaml").write_text(
+                yaml.safe_dump(task), encoding="utf-8"
+            )
+            buffer = io.StringIO()
+            with contextlib.redirect_stderr(buffer):
+                code = kernelpilot.main(
+                    [
+                        "verify",
+                        "--workspace",
+                        str(workspace),
+                        "--task",
+                        ".kernelpilot/custom.yaml",
+                    ]
+                )
+        self.assertEqual(code, 2)
+        self.assertIn("TLE assessment", buffer.getvalue())
 
     def test_structured_result_requires_stop_reason_and_workflow_issues(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -80,6 +80,12 @@ notes are evidence to guide experiments, not substitutes for task-local
 correctness and benchmarks. If the matching directory or notes are absent,
 record that and proceed from task-local evidence.
 
+For Hygon, route the measured bottleneck through `backends/hygon/note/METHODS.md`
+before choosing an experiment, and use
+`backends/hygon/note/OPERATOR-PORTING.md` when the operator is new to this
+device. Check `backends/hygon/note/rejected/` so a previously measured dead end
+is not retried unchanged.
+
 For Hygon performance analysis, capture the candidate with `rocprofv2` kernel
 trace and capture the comparable reference when available. Do not make a
 bottleneck claim or promote a candidate without a usable profiler capture. Use

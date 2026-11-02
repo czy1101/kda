@@ -129,3 +129,9 @@ notes:
     current gfx936 DTK/LLVM probe did not produce a direct global-to-LDS path;
     use the validated evidence and candidate gates in
     backends/hygon/note/gfx936-validation.md.
+  - >-
+    Route a measured bottleneck through backends/hygon/note/METHODS.md before
+    choosing the next experiment, check backends/hygon/note/rejected/ so a
+    previously rejected approach is not retried unchanged, and use
+    backends/hygon/note/OPERATOR-PORTING.md when the operator is new to this
+    device.

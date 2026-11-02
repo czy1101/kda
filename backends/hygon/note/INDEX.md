@@ -14,10 +14,13 @@ work so the same experiment is not repeated.
 
 - [Validated Hygon gfx936 reference](gfx936-validation.md) — Validated architecture, ISA, and calibration anchors for the BW/gfx936 DTK image. Scope: `BW/gfx936`, validated 2026-10-19, revalidate after 2027-01-31.
 - [HY3 prefill GQA and split-KV reference](hy3-prefill-gqa-split-kv.md) — Portable GQA K/V reuse and split-KV patterns plus the dispatch policy that gates them. Scope: `BW/gfx936`, revalidate after 2027-01-31, **provisional**.
+- [Choosing the next Hygon experiment](METHODS.md) — Route a measured Hygon bottleneck to the experiment that tests it, and to the evidence that decides it. Scope: `BW/gfx936`, revalidate after 2027-01-31.
 - [Hygon gfx936 MMAC/FMA path selection and multi-row fusion](mmac-fma-path-selection.md) — Choose MMAC or vector FMA from effective tile occupancy, and fuse rows only when reuse pays. Scope: `BW/gfx936`, revalidate after 2027-01-31, **provisional**.
+- [Porting an operator to BW/gfx936](OPERATOR-PORTING.md) — Port a new operator to Hygon BW/gfx936 in Triton and get it through the KDA evidence gates. Scope: `BW/gfx936`, revalidate after 2027-01-31, **provisional**.
 - [Hygon gfx936 profiling workflow](profiling-workflow.md) — Capture and read rocprofv2 kernel traces, counter exports, hipprof timelines, and device probes. Scope: `BW/gfx936`, validated 2026-10-19, revalidate after 2027-01-31.
 - [Triton structural optimization example: multi-row programs](examples/triton-multirow-program.md) — Multi-row Triton programs with a guarded applicability check and an evidence protocol. Scope: `BW/gfx936`, revalidate after 2027-01-31, **provisional**.
 - [Hygon Triton `tune_configs.yaml` guide](tune-configs.md) — Author Hygon Triton tune_configs.yaml candidates without breaking loader selection. Scope: `BW/gfx936`, revalidate after 2027-01-31, **provisional**.
+- [Reduction, memory, and launch-bound kernels](vector-reduction-and-launch-bound.md) — Diagnose reduction-bound, memory-bound, and launch-bound Triton kernels and choose the experiment that tests each. Scope: `BW/gfx936`, revalidate after 2027-01-31, **provisional**.
 
 ## Rejected approaches
 

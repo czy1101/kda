@@ -55,7 +55,10 @@ This repository defines a reusable workflow for GPU kernel optimization.
     only within their recorded scope and state when no matching notes exist.
     Treat a `provisional` note as a hypothesis to re-measure, and check
     `revalidate_after` before reusing a note after a DTK, driver, or device
-    change.
+    change. For Hygon, route the measured bottleneck through
+    `backends/hygon/note/METHODS.md`, check `backends/hygon/note/rejected/`
+    before retrying an experiment, and use
+    `backends/hygon/note/OPERATOR-PORTING.md` for a new operator.
 19. For Hygon performance analysis, require a usable profiler capture before
     making bottleneck claims or promoting a candidate. Prefer rocprofv2 kernel
     traces; use rocprof only after its task-local capture smoke test succeeds.

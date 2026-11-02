@@ -28,6 +28,8 @@ This repository documents an early research prototype and remains under active d
 | `docs/backend-extensions.md` | How to add a chip backend without growing prompts. |
 | `backends/README.md` | Backend-specific optimization note routing and lookup rules. |
 | `backends/hygon/note/INDEX.md` | Hygon reports, optimization guides, and gfx936 validation notes. |
+| `backends/hygon/note/METHODS.md` | Bottleneck-to-experiment routing for Hygon operators. |
+| `backends/hygon/note/OPERATOR-PORTING.md` | End-to-end checklist for porting a new operator to BW/gfx936. |
 | `skills/hygon-profile/SKILL.md` | Hygon profiler-stage router to the centralized note collection. |
 | `backends/` | Backend/architecture matching and stage-specific skill routing. |
 | `templates/task.yaml` | Fill-in task contract. |

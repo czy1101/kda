@@ -103,7 +103,7 @@ def _validate_quality(task: dict[str, Any]) -> list[str]:
                 if normalized.is_absolute() or ".." in normalized.parts:
                     errors.append("quality.import_paths.paths must stay inside the workspace")
                     continue
-                allowed = (task.get("constraints") or {}).get("allowed_paths") or []
+                allowed = _mapping(task.get("constraints")).get("allowed_paths") or []
                 if allowed and not any(
                     normalized.as_posix() == PurePosixPath(item).as_posix()
                     or normalized.as_posix().startswith(
@@ -147,7 +147,7 @@ def _validate_quality(task: dict[str, Any]) -> list[str]:
                 errors.append("quality.naming.registry.id must be a non-empty string")
             if isinstance(op_name, str) and isinstance(registry_id, str) and op_name != registry_id:
                 errors.append("quality.naming.registry.id must equal quality.naming.op_name")
-            allowed = (task.get("constraints") or {}).get("allowed_paths") or []
+            allowed = _mapping(task.get("constraints")).get("allowed_paths") or []
             if isinstance(registry_path, str) and allowed and registry_path not in allowed:
                 errors.append("quality.naming.registry.path must appear in constraints.allowed_paths")
 
@@ -201,7 +201,7 @@ def load_task(workspace: Path, task_path: Path | None = None) -> tuple[Path, dic
 
 
 def _profile_matches_target(profile: dict[str, Any], task: dict[str, Any]) -> bool:
-    target = task.get("target") or {}
+    target = _mapping(task.get("target"))
     match = profile.get("match") or {}
     if match.get("backend") != target.get("backend"):
         return False
@@ -226,8 +226,13 @@ def _matching_backend_profiles(task: dict[str, Any]) -> list[dict[str, Any]]:
     return matches
 
 
+def _mapping(value: Any) -> dict[str, Any]:
+    """Read a contract section as a mapping; a wrong type validates to an error."""
+    return value if isinstance(value, dict) else {}
+
+
 def _backend_profile(task: dict[str, Any]) -> dict[str, Any]:
-    profile_id = task.get("target", {}).get("profile")
+    profile_id = _mapping(task.get("target")).get("profile")
     if profile_id:
         path = KDA_ROOT / "backends" / f"{profile_id}.yaml"
         if not path.is_file():
@@ -244,7 +249,7 @@ def _backend_profile(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_backend_profile(task: dict[str, Any]) -> list[str]:
-    requested_id = task.get("target", {}).get("profile")
+    requested_id = _mapping(task.get("target")).get("profile")
     try:
         profile = _backend_profile(task)
     except (ContractError, yaml.YAMLError) as error:
@@ -257,7 +262,7 @@ def validate_backend_profile(task: dict[str, Any]) -> list[str]:
         errors.append(f"backend profile {profile_id} has an invalid version or id")
     if requested_id and profile_id != requested_id:
         errors.append(f"backend profile id {profile_id!r} does not match target.profile")
-    target = task.get("target", {})
+    target = _mapping(task.get("target"))
     match = profile.get("match") or {}
     if match.get("backend") != target.get("backend"):
         errors.append(f"backend profile {profile_id} does not match target.backend")
@@ -379,7 +384,7 @@ def _run_environment_probe(
 def _analysis_environment_fingerprint(workspace: Path, task: dict[str, Any]) -> str:
     execution = task.get("execution") or {"transport": "local"}
     environment = task.get("environment") or {}
-    target = task.get("target") or {}
+    target = _mapping(task.get("target"))
     descriptor = {
         "transport": execution.get("transport", "local"),
         "host": execution.get("host"),
@@ -743,6 +748,30 @@ def select_analysis_strategy(
 
 def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    # Work on a copy and normalize malformed sections once, so later checks
+    # report an error instead of raising AttributeError on a non-mapping value.
+    task = dict(task)
+    for section in (
+        "task",
+        "target",
+        "implementation",
+        "correctness",
+        "benchmark",
+        "baseline",
+        "goal",
+        "constraints",
+        "quality",
+        "analysis",
+        "stop",
+        "reference",
+        "generalization",
+        "environment",
+        "extension_config",
+    ):
+        value = task.get(section)
+        if value is not None and not isinstance(value, dict):
+            errors.append(f"{section} must be a mapping")
+            task[section] = {}
     for key in REQUIRED_TOP_LEVEL:
         if key not in task:
             errors.append(f"missing required top-level field: {key}")
@@ -750,6 +779,23 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
         errors.append("task contract still contains <placeholder> values")
     if task.get("version") != 1:
         errors.append("version must be 1")
+
+    task_block = task.get("task")
+    if not isinstance(task_block, dict):
+        errors.append("task must be a mapping")
+    else:
+        for field in ("name", "description"):
+            value = task_block.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"task.{field} must be a non-empty string")
+    target = task.get("target")
+    if not isinstance(target, dict):
+        errors.append("target must be a mapping")
+    else:
+        for field in ("backend", "device"):
+            value = target.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"target.{field} must be a non-empty string")
 
     execution = task.get("execution") or {"transport": "local"}
     transport = execution.get("transport", "local") if isinstance(execution, dict) else None
@@ -782,6 +828,34 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
         if not isinstance(command, str) or not command.strip():
             errors.append(f"{section}.command must be a non-empty string")
 
+    correctness_block = task.get("correctness") or {}
+    required = correctness_block.get("required")
+    if required is not None and not isinstance(required, bool):
+        errors.append("correctness.required must be boolean")
+    benchmark_block = task.get("benchmark") or {}
+    for field in ("warmup", "repeat"):
+        value = benchmark_block.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            errors.append(f"benchmark.{field} must be an integer >= 0")
+    shapes = benchmark_block.get("shapes")
+    if shapes is not None and (
+        not isinstance(shapes, list)
+        or not all(isinstance(shape, str) and shape.strip() for shape in shapes)
+    ):
+        errors.append("benchmark.shapes must be a list of non-empty strings")
+    reference = task.get("reference")
+    if reference is not None:
+        if not isinstance(reference, dict):
+            errors.append("reference must be a mapping")
+        else:
+            reference_path = reference.get("path")
+            if reference_path is not None and (
+                not isinstance(reference_path, str) or not reference_path.strip()
+            ):
+                errors.append("reference.path must be a non-empty string when configured")
+
     errors.extend(_validate_quality(task))
 
     baseline = task.get("baseline") or {}
@@ -794,6 +868,9 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
         errors.append("baseline.command must be a non-empty string when configured")
 
     goal = task.get("goal", {})
+    metric = goal.get("metric")
+    if not isinstance(metric, str) or not metric.strip():
+        errors.append("goal.metric must be a non-empty string")
     configured_targets = [
         field for field in ("relative_to_baseline", "target_value") if field in goal
     ]
@@ -807,6 +884,44 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
         errors.append(
             "goal.aggregation must be sum_ratio, mean_ratio, geomean_ratio, all, or any"
         )
+    max_regression = goal.get("max_regression")
+    if max_regression is not None and (
+        not isinstance(max_regression, (int, float))
+        or isinstance(max_regression, bool)
+        or max_regression < 0
+    ):
+        errors.append("goal.max_regression must be a number >= 0")
+
+    stop = task.get("stop")
+    if stop is not None:
+        if not isinstance(stop, dict):
+            errors.append("stop must be a mapping")
+        else:
+            for field, minimum in (
+                ("max_candidates", 1),
+                ("no_improvement_rounds", 1),
+                ("max_profile_runs", 0),
+            ):
+                value = stop.get(field)
+                if value is None:
+                    continue
+                if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+                    errors.append(f"stop.{field} must be an integer >= {minimum}")
+            for field in (
+                "target_reached",
+                "allow_no_actionable_bottleneck_exit",
+                "allow_backend_capability_exhausted_exit",
+            ):
+                value = stop.get(field)
+                if value is not None and not isinstance(value, bool):
+                    errors.append(f"stop.{field} must be boolean")
+            tolerance = stop.get("reference_parity_tolerance")
+            if tolerance is not None and (
+                not isinstance(tolerance, (int, float))
+                or isinstance(tolerance, bool)
+                or tolerance < 0
+            ):
+                errors.append("stop.reference_parity_tolerance must be a number >= 0")
 
     errors.extend(validate_backend_profile(task))
 
@@ -829,6 +944,9 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
                 isinstance(tool, str) and tool for tool in preferred_tools
             ):
                 errors.append("analysis.preferred_tools must contain non-empty strings")
+            fallback = analysis.get("ai_profile_fallback")
+            if fallback is not None and not isinstance(fallback, bool):
+                errors.append("analysis.ai_profile_fallback must be boolean")
             extensions = analysis.get("extensions") or {}
             if not isinstance(extensions, dict):
                 errors.append("analysis.extensions must be a mapping")
@@ -841,6 +959,14 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
                     errors.append(str(error))
 
     constraints = task.get("constraints", {})
+    if not isinstance(constraints, dict):
+        errors.append("constraints must be a mapping")
+        constraints = {}
+    else:
+        for field in ("preserve_api", "preserve_correctness"):
+            value = constraints.get(field)
+            if value is not None and not isinstance(value, bool):
+                errors.append(f"constraints.{field} must be boolean")
     allowed = constraints.get("allowed_paths", [])
     forbidden = constraints.get("forbidden_paths", [])
     try:
@@ -1135,7 +1261,7 @@ def _iter_contract_paths(workspace: Path, paths: Iterable[str]) -> Iterable[Path
 
 
 def _allowed_checkpoint_paths(task: dict[str, Any]) -> list[str]:
-    values = task.get("constraints", {}).get("allowed_paths") or []
+    values = _mapping(task.get("constraints")).get("allowed_paths") or []
     paths: list[str] = []
     for value in values:
         if not isinstance(value, str) or not value:
@@ -1313,7 +1439,7 @@ def _digest(path: Path) -> str:
 
 
 def snapshot_forbidden(workspace: Path, task: dict[str, Any]) -> dict[str, str]:
-    forbidden = task.get("constraints", {}).get("forbidden_paths", [])
+    forbidden = _mapping(task.get("constraints")).get("forbidden_paths", [])
     snapshot: dict[str, str] = {}
     for path in _iter_contract_paths(workspace, forbidden):
         # Contract paths are POSIX; keep the snapshot keys in the same style so
@@ -1953,6 +2079,12 @@ def main(argv: list[str] | None = None) -> int:
 
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+    verify_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+    verify_parser.add_argument(
+        "--final-result",
+        type=Path,
+        help="Structured run result to cross-check; defaults to the newest runs/codex-final-*.json",
+    )
 
     optimize_parser = subparsers.add_parser("optimize")
     optimize_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
@@ -1974,11 +2106,20 @@ def main(argv: list[str] | None = None) -> int:
             init_workspace(args.workspace)
             return 0
         if args.command == "verify":
-            _, task = load_task(args.workspace, DEFAULT_TASK)
-            errors = verify_evidence(args.workspace, task)
+            _, task = load_task(args.workspace, args.task)
+            final_path = args.final_result
+            if final_path is None:
+                recorded = sorted((args.workspace / "runs").glob("codex-final-*.json"))
+                final_path = recorded[-1] if recorded else None
+            final_result = None
+            final_errors: list[str] = []
+            if final_path is not None:
+                final_result, final_errors = load_final_result(final_path)
+            errors = final_errors + verify_evidence(args.workspace, task, final_result)
             if errors:
                 raise ContractError("invalid evidence:\n- " + "\n- ".join(errors))
-            print("evidence: valid")
+            checked = f" (final result: {final_path.name})" if final_path is not None else ""
+            print(f"evidence: valid{checked}")
             return 0
 
         _, task = load_task(args.workspace, args.task)
