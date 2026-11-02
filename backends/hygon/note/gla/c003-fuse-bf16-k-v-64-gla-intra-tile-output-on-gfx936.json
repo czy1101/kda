@@ -1,9 +1,11 @@
 {
+  "version": 1,
   "id": "c003",
   "title": "Fuse BF16 K=V=64 GLA intra-tile output on gfx936",
   "status": "confirmed",
   "created_at": "2026-10-27T06:31:58+00:00",
   "task": "flagattention-chunk-gla-bw1000",
+  "task_workspace": "flagattention-chunk-gla-bw1000",
   "backend": "hygon",
   "device": "BW",
   "arch": "gfx936",

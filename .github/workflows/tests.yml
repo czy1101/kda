@@ -26,3 +26,5 @@ jobs:
           python -m pip install pytest pyyaml jsonschema
       - name: Run the test suite
         run: python -m pytest tests -q
+      - name: Verify the knowledge indexes are fresh
+        run: python scripts/knowledge_index.py --check

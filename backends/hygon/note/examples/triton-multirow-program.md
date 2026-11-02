@@ -1,3 +1,14 @@
+---
+id: hygon-triton-multirow-program
+kind: guide
+status: provisional
+device: BW
+arch: gfx936
+operator: "attnres"
+scope: "Multi-row Triton programs with a guarded applicability check and an evidence protocol"
+revalidate_after: 2027-01-31
+---
+
 # Triton structural optimization example: multi-row programs
 
 This example records a reusable Triton optimization pattern validated on a

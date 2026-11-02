@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import re
@@ -14,10 +15,55 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from jsonschema import Draft202012Validator
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from knowledge_index import KnowledgeIndexError, write_index  # noqa: E402
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCHEMA_PATH = REPO_ROOT / "schemas/optimization-knowledge.schema.json"
+RECORD_VERSION = 1
+
+
+def _require_text(name: str, value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        raise KnowledgeError(f"{name} must not be empty")
+    return text
 
 
 class KnowledgeError(ValueError):
     """Raised when a candidate does not meet the knowledge-promotion gates."""
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def validate_record(record: dict[str, Any]) -> None:
+    """Validate a record against the published schema before anything is written."""
+    try:
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:  # pragma: no cover - repo damage
+        raise KnowledgeError(f"cannot read knowledge schema: {error}") from error
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(record), key=lambda error: list(error.path)
+    )
+    if errors:
+        details = "; ".join(
+            f"{'/'.join(str(part) for part in error.path) or '<root>'}: {error.message}"
+            for error in errors
+        )
+        raise KnowledgeError(f"knowledge record violates its schema: {details}")
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -177,8 +223,14 @@ def create_knowledge_record(
     limitations: str,
     minimum_improvement_percent: float = 5.0,
     evidence_paths: list[str] | None = None,
+    note_dir: str | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     task, target = _load_workspace(workspace)
+    title = _require_text("title", title)
+    mechanism = _require_text("mechanism", mechanism)
+    applicability = _require_text("applicability", applicability)
+    lesson = _require_text("lesson", lesson)
+    limitations = _require_text("limitations", limitations)
     candidate = _candidate_record(workspace, candidate_id)
     rows = _benchmark_rows(workspace, task, candidate_id, candidate)
     direction = task["goal"].get("direction", "minimize")
@@ -221,12 +273,18 @@ def create_knowledge_record(
     arch = str(target.get("arch", "unspecified"))
     operator = str(task["implementation"].get("entrypoint") or task["task"]["name"])
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ledger = {
+        "candidates_sha256": _sha256(workspace / "runs/candidates.jsonl"),
+        "benchmark_sha256": _sha256(workspace / "runs/benchmark.csv"),
+    }
     record = {
+        "version": RECORD_VERSION,
         "id": candidate_id,
         "title": title,
         "status": "confirmed",
         "created_at": now,
         "task": task["task"]["name"],
+        "task_workspace": workspace.as_posix(),
         "backend": backend,
         "device": device,
         "arch": arch,
@@ -246,12 +304,26 @@ def create_knowledge_record(
         "limitations": limitations,
         "tested_shapes": rows,
         "evidence": evidence,
+        "evidence_ledger": ledger,
     }
+    validate_record(record)
     slug = _safe_slug(title)
-    directory = f"{_safe_slug(backend)}-{_safe_slug(device)}-{_safe_slug(arch)}/{_safe_slug(operator)}"
+    relative_dir = _note_directory(note_dir, operator)
     filename = f"{_safe_slug(candidate_id)}-{slug}"
     markdown = _render_markdown(record)
-    return record, f"{directory}/{filename}.md", markdown
+    return record, f"{relative_dir}/{filename}.md", markdown
+
+
+def _note_directory(note_dir: str | None, operator: str) -> str:
+    """Resolve the note subdirectory, defaulting to the operator's slug."""
+    candidate = (note_dir or _safe_slug(operator)).strip("/")
+    path = Path(candidate)
+    if path.is_absolute() or ".." in path.parts:
+        raise KnowledgeError(f"note directory must stay inside the knowledge root: {candidate}")
+    normalized = "/".join(_safe_slug(part) for part in candidate.split("/") if part)
+    if not normalized:
+        raise KnowledgeError("note directory cannot be empty")
+    return normalized
 
 
 def _render_markdown(record: dict[str, Any]) -> str:
@@ -307,32 +379,62 @@ def _render_markdown(record: dict[str, Any]) -> str:
         ]
     )
     lines.extend(f"- `{item}`" for item in record["evidence"])
-    lines.extend(["", f"Recorded at: `{record['created_at']}`", ""])
+    ledger = record.get("evidence_ledger") or {}
+    if ledger:
+        lines.extend(
+            [
+                "",
+                "Ledger digests at publication (a changed ledger means this note is stale):",
+                "",
+                f"- `runs/candidates.jsonl` sha256 `{ledger['candidates_sha256']}`",
+                f"- `runs/benchmark.csv` sha256 `{ledger['benchmark_sha256']}`",
+            ]
+        )
+    if record.get("task_workspace"):
+        lines.extend(["", f"Task workspace: `{record['task_workspace']}`"])
+    lines.extend(["", f"Recorded at: `{record['created_at']}`"])
+    if record.get("updated_at"):
+        lines.append(
+            f"Updated at: `{record['updated_at']}` (version {record.get('version', 1)})"
+        )
+    lines.append("")
     return "\n".join(lines)
 
 
-def publish(record: dict[str, Any], markdown_path: str, markdown: str, knowledge_root: Path) -> Path:
+def publish(
+    record: dict[str, Any],
+    markdown_path: str,
+    markdown: str,
+    knowledge_root: Path,
+    *,
+    update: bool = False,
+) -> Path:
     note_path = knowledge_root / markdown_path
     json_path = note_path.with_suffix(".json")
-    if note_path.exists() or json_path.exists():
-        raise KnowledgeError(f"refusing to overwrite existing knowledge note: {note_path}")
+    if (note_path.exists() or json_path.exists()) and not update:
+        raise KnowledgeError(
+            f"refusing to overwrite existing knowledge note: {note_path} "
+            "(pass --update to revise a published note)"
+        )
+    if update:
+        if not json_path.is_file():
+            raise KnowledgeError(f"--update requires an existing record: {json_path}")
+        existing = json.loads(json_path.read_text(encoding="utf-8"))
+        record["created_at"] = existing.get("created_at", record["created_at"])
+        record["version"] = int(existing.get("version", 1)) + 1
+        record["status"] = existing.get("status", record.get("status", "confirmed"))
+        record["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        validate_record(record)
+        markdown = _render_markdown(record)
     note_path.parent.mkdir(parents=True, exist_ok=True)
     note_path.write_text(markdown, encoding="utf-8")
     json_path.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    index = knowledge_root / "INDEX.md"
-    if not index.exists():
-        index.write_text(
-            "# Evidence-backed optimization knowledge\n\n"
-            "Notes here are published only after KDA correctness, benchmark, and promotion gates pass.\n\n",
-            encoding="utf-8",
-        )
-    relative = note_path.relative_to(knowledge_root).as_posix()
-    entry = f"- [{record['backend']} / {record['device']} / {record['operator']}: {record['title']}]({relative}) — {record['improvement_percent']:.2f}% aggregate improvement.\n"
-    existing = index.read_text(encoding="utf-8")
-    if entry not in existing:
-        with index.open("a", encoding="utf-8") as handle:
-            handle.write(entry)
+    try:
+        write_index(knowledge_root)
+    except (KnowledgeIndexError, OSError) as error:
+        # The note itself is valid; a stale index is reported by
+        # `knowledge_index.py --check` in CI, so do not lose the publication.
+        print(f"record_knowledge: warning: index not regenerated: {error}", file=sys.stderr)
     return note_path
 
 
@@ -347,6 +449,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limitations", required=True, help="Known regressions, risks, and untested ranges")
     parser.add_argument("--evidence", action="append", default=[], help="Additional task-workspace evidence file; repeatable")
     parser.add_argument("--min-improvement", type=float, default=5.0, help="Minimum aggregate improvement percent (default: 5)")
+    parser.add_argument(
+        "--note-dir",
+        help="Note subdirectory under the knowledge root; defaults to the operator slug",
+    )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Revise an existing note for this candidate, incrementing its version",
+    )
     parser.add_argument(
         "--knowledge-root",
         type=Path,
@@ -366,19 +477,22 @@ def main(argv: list[str] | None = None) -> int:
             limitations=args.limitations,
             minimum_improvement_percent=args.min_improvement,
             evidence_paths=args.evidence,
+            note_dir=args.note_dir,
         )
-        repo_root = Path(__file__).resolve().parents[1]
-        vendor_notes = repo_root / "backends" / _safe_slug(record["backend"]) / "note"
+        vendor_notes = REPO_ROOT / "backends" / _safe_slug(record["backend"]) / "note"
         root = args.knowledge_root or (
-            vendor_notes if vendor_notes.is_dir() else repo_root / "knowledge"
+            vendor_notes if vendor_notes.is_dir() else REPO_ROOT / "knowledge"
         )
-        output = publish(record, relative_path, markdown, root.resolve())
+        output = publish(
+            record, relative_path, markdown, root.resolve(), update=args.update
+        )
     except (KnowledgeError, OSError, yaml.YAMLError) as error:
         print(f"record_knowledge: {error}", file=sys.stderr)
         return 2
     print(output)
     print(f"aggregate improvement: {record['improvement_percent']:.2f}%")
     print(f"shapes recorded: {len(record['tested_shapes'])}")
+    print(f"record version: {record.get('version', 1)}")
     return 0
 
 

@@ -1,3 +1,14 @@
+---
+id: hygon-mmac-fma-path-selection
+kind: guide
+status: provisional
+device: BW
+arch: gfx936
+operator: "hy3 decode attention"
+scope: "Choose MMAC or vector FMA from effective tile occupancy, and fuse rows only when reuse pays"
+revalidate_after: 2027-01-31
+---
+
 # Hygon gfx936 MMAC/FMA path selection and multi-row fusion
 
 This document records a reusable optimization method for Hygon gfx936

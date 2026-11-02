@@ -157,7 +157,11 @@ optimization knowledge. This review is mandatory by default:
    created. If ineligible, record the concrete gate that failed and keep the
    result only in the task candidate/report artifacts. Rejected, failed,
    inconclusive, or non-transferable candidates must never be labeled confirmed.
-4. Record the publication or skip result in `runs/stage-events.jsonl` and
+4. When a rejected candidate is a result someone would otherwise retry, record
+   it as negative knowledge with `scripts/record_rejection.py`: what was
+   measured, why it failed, and the condition that would justify another
+   attempt. A rejection is not a result note and must not be cited as a win.
+5. Record the publication or skip result in `runs/stage-events.jsonl` and
    `docs/final-report.md`. A recorder error must be reported and must not change
    the selected best-correct implementation or be presented as a published note.
    Return the same outcome in the structured result's `knowledge_publication`

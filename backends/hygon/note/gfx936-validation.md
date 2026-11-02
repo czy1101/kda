@@ -1,3 +1,14 @@
+---
+id: hygon-gfx936-validation
+kind: guide
+status: confirmed
+device: BW
+arch: gfx936
+scope: "Validated architecture, ISA, and calibration anchors for the BW/gfx936 DTK image"
+last_validated: 2026-10-19
+revalidate_after: 2027-01-31
+---
+
 # Validated Hygon gfx936 reference
 
 This document records a validated reference for the BW/gfx936 DTK image used

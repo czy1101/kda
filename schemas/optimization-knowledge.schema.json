@@ -11,11 +11,17 @@
     "mechanism", "applicability", "transferable_lesson", "limitations", "tested_shapes", "evidence"
   ],
   "properties": {
-    "id": {"type": "string"},
-    "title": {"type": "string"},
-    "status": {"const": "confirmed"},
+    "version": {"type": "integer", "minimum": 1, "default": 1},
+    "id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "status": {"enum": ["confirmed", "provisional", "superseded"]},
     "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "reviewed_at": {"type": "string", "format": "date-time"},
+    "revalidate_after": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+    "superseded_by": {"type": "string", "minLength": 1},
     "task": {"type": "string"},
+    "task_workspace": {"type": "string"},
     "backend": {"type": "string"},
     "device": {"type": "string"},
     "arch": {"type": "string"},
@@ -51,6 +57,16 @@
         }
       }
     },
-    "evidence": {"type": "array", "minItems": 2, "items": {"type": "string"}}
+    "evidence": {"type": "array", "minItems": 2, "items": {"type": "string"}},
+    "evidence_ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Digests of the task ledger files this note was computed from, so later edits are detectable.",
+      "required": ["candidates_sha256", "benchmark_sha256"],
+      "properties": {
+        "candidates_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "benchmark_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
   }
 }

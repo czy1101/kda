@@ -1,3 +1,14 @@
+---
+id: hygon-hy3-prefill-gqa-split-kv
+kind: guide
+status: provisional
+device: BW
+arch: gfx936
+operator: "hy3 prefill attention"
+scope: "Portable GQA K/V reuse and split-KV patterns plus the dispatch policy that gates them"
+revalidate_after: 2027-01-31
+---
+
 # HY3 prefill GQA and split-KV reference
 
 This document records reusable, evidence-backed patterns for optimizing a

@@ -1,3 +1,14 @@
+---
+id: hygon-profiling-workflow
+kind: guide
+status: confirmed
+device: BW
+arch: gfx936
+scope: "Capture and read rocprofv2 kernel traces, counter exports, hipprof timelines, and device probes"
+last_validated: 2026-10-19
+revalidate_after: 2027-01-31
+---
+
 # Hygon gfx936 profiling workflow
 
 KDA treats Hygon profiling as a backend capability selected from live probes,

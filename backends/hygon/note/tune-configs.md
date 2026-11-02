@@ -1,3 +1,14 @@
+---
+id: hygon-triton-tune-configs
+kind: guide
+status: provisional
+device: BW
+arch: gfx936
+operator: "triton tune_configs.yaml"
+scope: "Author Hygon Triton tune_configs.yaml candidates without breaking loader selection"
+revalidate_after: 2027-01-31
+---
+
 # Hygon Triton `tune_configs.yaml` guide
 
 ## Purpose

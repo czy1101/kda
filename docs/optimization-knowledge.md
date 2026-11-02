@@ -29,12 +29,20 @@ The command refuses to publish a note unless all of the following hold:
    lesson, and limitations. The command does not infer a causal explanation
    from latency numbers.
 
-Published notes go under `backends/<vendor>/note/<backend>-<device>-<arch>/<operator>/`
-when that vendor note directory exists; otherwise they go under
-`knowledge/<backend>-<device>-<arch>/<operator>/`. Each consists of a readable
-Markdown report and a JSON sidecar validated by
-`schemas/optimization-knowledge.schema.json`; the selected note root's
-`INDEX.md` is updated for discovery. Existing notes are never overwritten.
+Published notes go under `backends/<vendor>/note/<operator>/` when that vendor
+note directory exists; otherwise they go under
+`knowledge/<backend>-<device>-<arch>/<operator>/`. `--note-dir` overrides the
+operator directory so a note can join an existing family (for example `gla`).
+Each consists of a readable Markdown report and a JSON sidecar validated by
+`schemas/optimization-knowledge.schema.json` before anything is written. The
+JSON also records `task_workspace` and the sha256 of `runs/candidates.jsonl`
+and `runs/benchmark.csv`, so a note can be traced back to the ledgers it was
+computed from and a later ledger edit is detectable. Existing notes are never
+overwritten silently; `--update` revises one in place and increments its
+`version`, keeping `created_at` and setting `updated_at`.
+
+`INDEX.md` is generated from the notes by `scripts/knowledge_index.py`, never
+hand-edited. CI runs it with `--check`, so a stale catalog fails the build.
 
 Example:
 
@@ -54,7 +62,55 @@ For example, Hygon reports are collected under `backends/hygon/note/`. Add a
 vendor note directory before publishing confirmed knowledge for a new backend
 family if its reports should be collected with that profile.
 
-Rejected, inconclusive, correctness-failing, and insignificant candidates stay
-in the task's candidate ledger; they are not promoted into reusable
-optimization guidance. This prevents KDA from teaching an unverified
-correlation as a general device rule.
+## Negative knowledge
+
+A rejected approach is still knowledge: it answers "we tried this and it was
+slower, retry only when X". Record it with `scripts/record_rejection.py`, which
+writes a short front-mattered note under `<note-root>/rejected/` and regenerates
+the index:
+
+```bash
+python3 scripts/record_rejection.py \
+  --title "GLA intra-tile fusion is slower at K=V=128" \
+  --device BW --arch gfx936 \
+  --operator flag_attn.runtime.backend._hygon.FLA.gla.chunk_gla \
+  --scope "Fusing the intra-chunk A tile with the output stage at K=128, V=128" \
+  --hypothesis "Removing the FP32 intermediate should help every head size." \
+  --observed "1.5x to 1.7x slower than baseline on the tested cases." \
+  --reason "The wide tile decomposes into repeated subtiles; LDS pressure dominates." \
+  --retry-when "A wide-tile schedule fits 64 KiB LDS with the measured VGPR use."
+```
+
+A rejection is not evidence-gated like a confirmed result — its value is the
+documented failure — but it must state what was tried, what was measured, why it
+failed, and the concrete condition that would justify a retry. Rejections are
+never cited as wins: they live under `## Rejected approaches` in the index.
+
+Rejected, inconclusive, correctness-failing, and insignificant candidates are
+still not promoted into confirmed guidance. This prevents KDA from teaching an
+unverified correlation as a general device rule, while keeping the dead end on
+record so the next run does not repeat it.
+
+## Metadata and lifecycle
+
+Notes without a JSON sidecar (guides and rejections) carry YAML front matter:
+
+```yaml
+---
+id: hygon-mmac-fma-path-selection
+kind: guide            # guide | rejection
+status: confirmed      # confirmed | provisional | superseded | rejected
+device: BW
+arch: gfx936
+operator: "hy3 decode attention"
+scope: "Choose MMAC or vector FMA from effective tile occupancy"
+last_validated: 2026-10-19      # optional: when evidence was collected
+revalidate_after: 2027-01-31    # optional: re-check after a DTK or device change
+---
+```
+
+`status: provisional` marks method that is not yet backed by a recorded result
+note; `superseded` (results) and `rejected` (rejections) close a note's life.
+Re-validation is a new note or an `--update`, not a silent edit, so the index
+always reflects what was actually measured when.
+

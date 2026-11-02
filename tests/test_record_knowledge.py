@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -15,6 +16,7 @@ _SPEC.loader.exec_module(_MODULE)
 KnowledgeError = _MODULE.KnowledgeError
 create_knowledge_record = _MODULE.create_knowledge_record
 publish = _MODULE.publish
+_validate = _MODULE.validate_record
 
 
 def _workspace(tmp_path, *, correctness="pass", decision="keep", candidate_values=None):
@@ -99,3 +101,72 @@ def test_requires_every_configured_shape(tmp_path):
     workspace = _workspace(tmp_path, candidate_values={"small": 0.8})
     with pytest.raises(KnowledgeError, match="lacks configured benchmark shapes"):
         _record(workspace)
+
+
+def test_record_binds_ledger_digests_and_workspace(tmp_path):
+    workspace = _workspace(tmp_path)
+    record, _, _ = _record(workspace)
+    ledger = record["evidence_ledger"]
+    assert ledger["candidates_sha256"] == hashlib.sha256(
+        (workspace / "runs/candidates.jsonl").read_bytes()
+    ).hexdigest()
+    assert ledger["benchmark_sha256"] == hashlib.sha256(
+        (workspace / "runs/benchmark.csv").read_bytes()
+    ).hexdigest()
+    assert record["task_workspace"] == workspace.as_posix()
+
+
+def test_validate_record_rejects_missing_required_field(tmp_path):
+    workspace = _workspace(tmp_path)
+    record, _, _ = _record(workspace)
+    broken = dict(record)
+    broken.pop("mechanism")
+    with pytest.raises(KnowledgeError, match="violates its schema"):
+        _validate(broken)
+    broken = dict(record, status="maybe")
+    with pytest.raises(KnowledgeError, match="violates its schema"):
+        _validate(broken)
+
+
+def test_record_is_validated_against_the_schema(tmp_path):
+    workspace = _workspace(tmp_path)
+    with pytest.raises(KnowledgeError, match="mechanism must not be empty"):
+        _record(workspace, mechanism="   ")
+
+
+def test_publish_regenerates_the_index(tmp_path):
+    workspace = _workspace(tmp_path)
+    record, relative, markdown = _record(workspace)
+    root = tmp_path / "note"
+    out = publish(record, relative, markdown, root)
+    index = (root / "INDEX.md").read_text(encoding="utf-8")
+    assert "do not edit by hand" in index
+    assert out.relative_to(root).as_posix() in index
+    assert "+33.33% aggregate" in index or "aggregate" in index
+
+
+def test_update_revises_a_note_in_place(tmp_path):
+    workspace = _workspace(tmp_path)
+    record, relative, markdown = _record(workspace)
+    root = tmp_path / "note"
+    publish(record, relative, markdown, root)
+    with pytest.raises(KnowledgeError, match="refusing to overwrite"):
+        publish(record, relative, markdown, root)
+
+    created_at = record["created_at"]
+    revised, relative, markdown = _record(workspace, limitations="Revised after re-validation.")
+    out = publish(revised, relative, markdown, root, update=True)
+    stored = json.loads(out.with_suffix(".json").read_text(encoding="utf-8"))
+    assert stored["version"] == 2
+    assert stored["created_at"] == created_at
+    assert stored["updated_at"]
+    assert "Revised after re-validation." in out.read_text(encoding="utf-8")
+
+
+def test_note_dir_controls_the_note_location(tmp_path):
+    workspace = _workspace(tmp_path)
+    _, relative, _ = _record(workspace, note_dir="gla")
+    assert relative.startswith("gla/")
+    with pytest.raises(KnowledgeError, match="inside the knowledge root"):
+        _record(workspace, note_dir="../escape")
+

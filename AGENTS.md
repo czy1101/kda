@@ -43,13 +43,19 @@ This repository defines a reusable workflow for GPU kernel optimization.
     regression, and transferability gates pass; otherwise record why it was
     skipped. Include the device, architecture, operator, applicability,
     limitations, and evidence. Never publish rejected, failed, inconclusive,
-    or unsupported candidates as confirmed knowledge.
+    or unsupported candidates as confirmed knowledge. A rejected candidate that
+    would otherwise be retried belongs in `scripts/record_rejection.py` negative
+    knowledge instead: state what was measured, why it failed, and the condition
+    that would justify a retry.
 18. After confirming the execution backend and device from the task contract and
     live preflight, inspect the matching vendor notes under `backends/` before
     forming optimization hypotheses. For Hygon, read
     `backends/hygon/note/INDEX.md`; for another domestic accelerator, read the
     corresponding `backends/<vendor>/note/INDEX.md` when present. Apply findings
     only within their recorded scope and state when no matching notes exist.
+    Treat a `provisional` note as a hypothesis to re-measure, and check
+    `revalidate_after` before reusing a note after a DTK, driver, or device
+    change.
 19. For Hygon performance analysis, require a usable profiler capture before
     making bottleneck claims or promoting a candidate. Prefer rocprofv2 kernel
     traces; use rocprof only after its task-local capture smoke test succeeds.
@@ -98,6 +104,9 @@ For every kernel optimization task:
 | Absolute package imports in submitted Python files | Mandatory built-in AST audit on every `run quality`; optional extra paths under `quality.import_paths`, evidence in `runs/quality.json` |
 | Which stage the task is currently in | the task workspace, not this repository |
 | Confirmed, reusable optimization lesson | `scripts/record_knowledge.py`; vendor-specific notes under `backends/<vendor>/note/`, with `knowledge/` as the generic fallback |
+| Measured negative result worth not repeating | `scripts/record_rejection.py` → `<note-root>/rejected/` |
+| A note's lifecycle state, scope, and re-validation date | YAML front matter on guides/rejections; `status`/`version`/`updated_at` in result JSON |
+| The note catalog for a backend | Generated `INDEX.md` via `scripts/knowledge_index.py` (never hand-edited) |
 
 The reusable loop is defined here; task-specific prompts, harnesses, and results
 stay in the task workspace. See [docs/agent-flow.md](docs/agent-flow.md) for the

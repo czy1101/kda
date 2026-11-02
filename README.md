@@ -34,6 +34,8 @@ This repository documents an early research prototype and remains under active d
 | `templates/optimization-knowledge.md` | Template for evidence-backed reusable knowledge. |
 | `templates/operator-workspace/` | Files to drop into an operator repository. |
 | `scripts/record_knowledge.py` | Evidence-gated Markdown/JSON knowledge publisher. |
+| `scripts/record_rejection.py` | Negative-knowledge recorder for measured rejections. |
+| `scripts/knowledge_index.py` | Generates each note root's `INDEX.md`; `--check` gates CI. |
 | `scripts/kernelpilot.py` | Minimal task validator, environment-aware command runner, and Codex driver. |
 | `scripts/controlled_ssh.py` | Allow-listed, hash-guarded adapter for execution-only GPU hosts. |
 | `CONTRIBUTING.md` | Contribution process and DCO sign-off requirements. |
