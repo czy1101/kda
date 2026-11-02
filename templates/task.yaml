@@ -61,10 +61,9 @@ benchmark:
   shapes:
     - <shape that must be covered, e.g. 1x8192x128>
 
-# Optional PR-oriented quality gates. Uncomment and fill this block when the
-# repository has a public API, layered modules, an operator registry, pytest
-# markers, and a unified operator dispatcher. `kernelpilot run quality` runs
-# all five commands and records runs/quality.json.
+# Optional project-specific PR quality gates. The built-in absolute-import
+# audit runs for every task; uncomment this block to add the other five gates.
+# `kernelpilot run quality` records all results in runs/quality.json.
 # quality:
 #   required: true
 #   public_api:
@@ -78,6 +77,10 @@ benchmark:
 #     implementation_paths: []
 #     test_paths: []
 #     benchmark_paths: []
+#   import_paths:
+#     # Optional extra repository paths to scan; implementation.path is always
+#     # scanned. These are module-source paths, not server filesystem paths.
+#     paths: []
 #   naming:
 #     op_name: <stable_operator_id>
 #     marker: <stable_operator_id>

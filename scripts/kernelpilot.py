@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +30,7 @@ from controlled_ssh import (  # noqa: E402
     ControlledSSH,
     SSHAdapterError,
     command_script as remote_command_script,
+    hash_forbidden,
     inspect_remote,
     list_tle_wiki,
     mirror_root,
@@ -59,7 +62,14 @@ class ContractError(ValueError):
     pass
 
 
-QUALITY_CHECK_NAMES = ("public_api", "module_layers", "naming", "pytest", "dispatch")
+QUALITY_CHECK_NAMES = (
+    "public_api",
+    "module_layers",
+    "import_paths",
+    "naming",
+    "pytest",
+    "dispatch",
+)
 
 
 def _validate_quality(task: dict[str, Any]) -> list[str]:
@@ -75,9 +85,36 @@ def _validate_quality(task: dict[str, Any]) -> list[str]:
         errors.append("quality.required must be boolean")
 
     for name in QUALITY_CHECK_NAMES:
-        config = quality.get(name)
+        # The AST import gate is automatic; keeping its config optional makes
+        # existing five-command quality contracts continue to work unchanged.
+        config = quality.get(name, {}) if name == "import_paths" else quality.get(name)
         if not isinstance(config, dict):
             errors.append(f"quality.{name} must be a mapping")
+            continue
+        if name == "import_paths":
+            paths = config.get("paths", [])
+            if not isinstance(paths, list) or any(
+                not isinstance(path, str) or not path.strip() for path in paths
+            ):
+                errors.append("quality.import_paths.paths must be a list of non-empty paths")
+                continue
+            for path in paths:
+                normalized = PurePosixPath(path)
+                if normalized.is_absolute() or ".." in normalized.parts:
+                    errors.append("quality.import_paths.paths must stay inside the workspace")
+                    continue
+                allowed = (task.get("constraints") or {}).get("allowed_paths") or []
+                if allowed and not any(
+                    normalized.as_posix() == PurePosixPath(item).as_posix()
+                    or normalized.as_posix().startswith(
+                        PurePosixPath(item).as_posix().rstrip("/") + "/"
+                    )
+                    for item in allowed
+                    if isinstance(item, str)
+                ):
+                    errors.append(
+                        "quality.import_paths.paths must be within constraints.allowed_paths"
+                    )
             continue
         command = config.get("command")
         if not isinstance(command, str) or not command.strip():
@@ -283,6 +320,11 @@ def _analysis_tool_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _is_profile_capture_tool(tool: dict[str, Any]) -> bool:
+    """Exclude session controllers and device inspectors from profiler selection."""
+    return tool.get("kind") not in {"profiler-controller", "device-inspector"}
+
+
 def _profile_tool_config(task: dict[str, Any], tool_id: str | None) -> dict[str, Any]:
     profile_task = task.get("profile") or {}
     config = {
@@ -327,6 +369,8 @@ def _run_environment_probe(
         [shell, "-lc", script],
         cwd=workspace,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
@@ -410,9 +454,12 @@ def discover_analysis_tools(
                 if version_text:
                     record["version"] = version_text[:2000]
             result["tools"].append(record)
-        available_ids = [tool["id"] for tool in result["tools"] if tool["available"]]
-        result["selected"] = available_ids[0] if available_ids else None
-        result["status"] = "complete" if available_ids else "no_tool_available"
+        available_tools = [tool for tool in result["tools"] if tool["available"]]
+        selectable_tools = [
+            tool for tool in available_tools if _is_profile_capture_tool(tool)
+        ]
+        result["selected"] = selectable_tools[0]["id"] if selectable_tools else None
+        result["status"] = "complete" if available_tools else "no_tool_available"
 
     output = workspace / ANALYSIS_CAPABILITIES
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -442,9 +489,21 @@ def load_analysis_capabilities(
     return value
 
 
+def _tle_policy(task: dict[str, Any]) -> str:
+    """Read the TLE extension policy from its contracted location.
+
+    The contract stores this policy under ``analysis.extensions.tle`` as a
+    string (``auto``/``disabled``/``required``). Every reader goes through this
+    helper so the location cannot drift again.
+    """
+    extensions = (task.get("analysis") or {}).get("extensions") or {}
+    policy = extensions.get("tle", "disabled")
+    return policy if isinstance(policy, str) and policy else "disabled"
+
+
 def assess_tle(workspace: Path, task: dict[str, Any], ssh_bin: str = "ssh") -> dict[str, Any]:
     """Check the configured TLE Wiki and task-declared API probe without installing anything."""
-    policy = (task.get("analysis") or {}).get("extensions", {}).get("tle", "disabled")
+    policy = _tle_policy(task)
     config = (task.get("extension_config") or {}).get("tle") or {}
     wiki_path = config.get("wiki_path", "tle-wiki")
     result: dict[str, Any] = {
@@ -557,7 +616,11 @@ def select_analysis_strategy(
     else:
         available_ids = []
 
-    available_specs = [specs_by_id[name] for name in available_ids if name in specs_by_id]
+    available_specs = [
+        specs_by_id[name]
+        for name in available_ids
+        if name in specs_by_id and _is_profile_capture_tool(specs_by_id[name])
+    ]
     ranked = _rank_analysis_tools(available_specs, preferred)
     if explicit and explicit != "auto":
         ranked = [tool for tool in ranked if tool.get("id") == explicit]
@@ -651,7 +714,9 @@ def select_analysis_strategy(
         "unavailable_profilers": [
             tool.get("id")
             for tool in (discovery or {}).get("tools") or []
-            if isinstance(tool, dict) and not tool.get("available")
+            if isinstance(tool, dict)
+            and not tool.get("available")
+            and _is_profile_capture_tool(tool)
         ],
         "structured_profile_export": bool(
             "structured_export" in selected_capabilities
@@ -696,6 +761,14 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
         remote_workspace = execution.get("workspace")
         if not isinstance(remote_workspace, str) or not remote_workspace.startswith("/"):
             errors.append("execution.workspace must be an absolute POSIX path for ssh transport")
+    container = execution.get("container") if isinstance(execution, dict) else None
+    if container is not None:
+        if transport != "ssh":
+            errors.append("execution.container requires execution.transport: ssh")
+        elif not isinstance(container, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]*", container
+        ):
+            errors.append("execution.container must be a safe Docker container name")
 
     implementation = task.get("implementation", {})
     implementation_path = implementation.get("path")
@@ -876,19 +949,23 @@ def run_quality_checks(
     *,
     ssh_bin: str = "ssh",
 ) -> dict[str, Any]:
-    """Run configured public-API and PR integration quality gates."""
+    """Run configured PR gates, including the built-in absolute-import audit."""
     quality = task.get("quality")
     if quality is None:
+        import_check = _run_import_path_check(workspace, task, {})
         result = {
-            "status": "skipped",
-            "required": False,
-            "checks": {},
+            "status": import_check["status"],
+            "required": True,
+            "checks": {"import_paths": import_check},
             "timestamp": _utc_now(),
         }
     else:
         checks: dict[str, Any] = {}
         for name in QUALITY_CHECK_NAMES:
-            config = quality[name]
+            config = quality.get(name, {})
+            if name == "import_paths":
+                checks[name] = _run_import_path_check(workspace, task, config)
+                continue
             completed = run_explicit_command(
                 workspace,
                 task,
@@ -913,6 +990,50 @@ def run_quality_checks(
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result
+
+
+def _run_import_path_check(
+    workspace: Path, task: dict[str, Any], config: dict[str, Any]
+) -> dict[str, Any]:
+    """Reject Python relative imports in the task's allow-listed source files."""
+    source_root = _checkpoint_source_root(workspace, task)
+    paths = list(
+        dict.fromkeys([task["implementation"]["path"], *config.get("paths", [])])
+    )
+    findings: list[str] = []
+    scanned = 0
+    for path in _iter_contract_paths(source_root, paths):
+        if path.suffix != ".py" or not path.is_file():
+            continue
+        scanned += 1
+        relative = path.relative_to(source_root).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+        except (OSError, UnicodeError, SyntaxError) as error:
+            findings.append(f"{relative}: unable to parse Python source: {error}")
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level > 0:
+                module = f".{'.' * (node.level - 1)}{node.module or ''}"
+                findings.append(
+                    f"{relative}:{node.lineno}: relative import 'from {module} import ...'; "
+                    "use the repository's absolute package import path"
+                )
+
+    implementation = task.get("implementation", {}).get("path", "")
+    if implementation.endswith(".py") and not (source_root / implementation).is_file():
+        findings.append(
+            f"{implementation}: implementation source is unavailable for the import audit; "
+            "materialize the task source before running quality checks"
+        )
+
+    return {
+        "command": "KernelPilot built-in AST audit (absolute package imports)",
+        "status": "fail" if findings else "pass",
+        "returncode": 1 if findings else 0,
+        "stdout": f"Scanned {scanned} Python file(s).",
+        "stderr": "\n".join(findings),
+    }
 
 
 def run_contract_command(
@@ -983,6 +1104,8 @@ def run_preflight(workspace: Path, task: dict[str, Any]) -> None:
             [shell, "-lc", script],
             cwd=workspace,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             check=False,
         )
@@ -1044,14 +1167,84 @@ def _copy_checkpoint_entry(source: Path, destination: Path) -> None:
         raise ContractError(f"cannot checkpoint missing allowed path: {source}")
 
 
+def assert_promotion_evidence(
+    workspace: Path, task: dict[str, Any], candidate: str
+) -> dict[str, Any]:
+    """Refuse to promote a candidate that the ledgers do not back.
+
+    This is the executable form of "promotion is recomputed from the records":
+    the candidate must be recorded once, marked ``keep`` and ``correctness:
+    pass``, and its per-shape rows must satisfy the contracted benchmark and
+    target checks. Only the interactive ``checkpoint save-best`` path enforces
+    it, because the automated runner only ever checkpoints ``baseline``.
+    """
+    if candidate == "baseline":
+        return {"candidate": candidate, "evidence": "baseline"}
+    records, _errors = _load_candidate_records(workspace)
+    matches = [record for record in records if record.get("id") == candidate]
+    if not matches:
+        problems = [f"candidate {candidate!r} is not recorded in runs/candidates.jsonl"]
+    else:
+        record = matches[-1]
+        problems = list(record.get("_ledger_errors") or [])
+        if len(matches) > 1:
+            problems.append(f"candidate {candidate!r} appears {len(matches)} times in the ledger")
+        if record.get("correctness") != "pass":
+            problems.append(
+                f"candidates.jsonl records correctness={record.get('correctness')!r}, not 'pass'"
+            )
+        if record.get("decision") != "keep":
+            problems.append(
+                f"candidates.jsonl records decision={record.get('decision')!r}, not 'keep'"
+            )
+    goal_result, goal_errors = evaluate_goal(workspace, task, candidate)
+    problems.extend(goal_errors)
+    if not (workspace / "runs/benchmark.csv").is_file():
+        # evaluate_goal treats an absent ledger as "nothing to compare"; for a
+        # promotion that is a missing-evidence error, not a pass.
+        problems.append("runs/benchmark.csv is missing; the candidate has no measured evidence")
+    if problems:
+        raise ContractError(
+            f"refusing to save best checkpoint for {candidate!r}:\n- " + "\n- ".join(problems)
+        )
+    return {
+        "candidate": candidate,
+        "aggregate_ratio": (goal_result or {}).get("aggregate_ratio"),
+        "target_reached": (goal_result or {}).get("target_reached"),
+        "shapes": len(
+            {
+                row.get("shape")
+                for row in _benchmark_rows(workspace, candidate)
+                if row.get("shape")
+            }
+        ),
+    }
+
+
+def _benchmark_rows(workspace: Path, candidate: str) -> list[dict[str, Any]]:
+    path = workspace / "runs/benchmark.csv"
+    if not path.is_file():
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if "candidate" not in (reader.fieldnames or []):
+            return []
+        return [row for row in reader if row.get("candidate") == candidate]
+
+
 def save_checkpoint(
     workspace: Path,
     task: dict[str, Any],
     name: str,
     candidate: str,
+    *,
+    require_evidence: bool = False,
 ) -> dict[str, Any]:
     if name not in ("baseline", "best"):
         raise ContractError("checkpoint name must be baseline or best")
+    evidence: dict[str, Any] | None = None
+    if require_evidence:
+        evidence = assert_promotion_evidence(workspace, task, candidate)
     source_root = _checkpoint_source_root(workspace, task)
     checkpoint_parent = workspace / CHECKPOINT_ROOT
     checkpoint_parent.mkdir(parents=True, exist_ok=True)
@@ -1069,6 +1262,8 @@ def save_checkpoint(
         "saved_at": _utc_now(),
         "paths": _allowed_checkpoint_paths(task),
     }
+    if evidence is not None:
+        metadata["promotion_evidence"] = evidence
     (temporary / "checkpoint.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
     )
@@ -1082,6 +1277,7 @@ def restore_checkpoint(
     workspace: Path,
     task: dict[str, Any],
     name: str = "best",
+    ssh_bin: str = "ssh",
 ) -> dict[str, Any]:
     checkpoint = workspace / CHECKPOINT_ROOT / name
     metadata_path = checkpoint / "checkpoint.json"
@@ -1099,9 +1295,11 @@ def restore_checkpoint(
         _copy_checkpoint_entry(source, destination)
     execution = task.get("execution") or {"transport": "local"}
     if execution.get("transport", "local") == "ssh":
-        metadata["pushed"] = push_allowed(workspace, task)
+        metadata["pushed"] = push_allowed(workspace, task, ssh_bin)
     metadata["restored_at"] = _utc_now()
     return metadata
+
+
 def _digest(path: Path) -> str:
     if not path.exists() and not path.is_symlink():
         return "<missing>"
@@ -1118,15 +1316,31 @@ def snapshot_forbidden(workspace: Path, task: dict[str, Any]) -> dict[str, str]:
     forbidden = task.get("constraints", {}).get("forbidden_paths", [])
     snapshot: dict[str, str] = {}
     for path in _iter_contract_paths(workspace, forbidden):
-        relative = str(path.relative_to(workspace))
+        # Contract paths are POSIX; keep the snapshot keys in the same style so
+        # reports and comparisons are identical on Windows and POSIX hosts.
+        relative = path.relative_to(workspace).as_posix()
         snapshot[relative] = _digest(path)
     return snapshot
 
 
+def snapshot_forbidden_remote(task: dict[str, Any], ssh_bin: str = "ssh") -> dict[str, str]:
+    """Snapshot forbidden paths on the executor; contracts require a remote check."""
+    return hash_forbidden(task, ssh_bin)
+
+
 def compare_forbidden(
-    workspace: Path, task: dict[str, Any], before: dict[str, str]
+    workspace: Path,
+    task: dict[str, Any],
+    before: dict[str, str],
+    *,
+    remote: bool = False,
+    ssh_bin: str = "ssh",
 ) -> list[str]:
-    after = snapshot_forbidden(workspace, task)
+    after = (
+        snapshot_forbidden_remote(task, ssh_bin)
+        if remote
+        else snapshot_forbidden(workspace, task)
+    )
     changed = sorted(
         path for path in set(before) | set(after) if before.get(path) != after.get(path)
     )
@@ -1134,13 +1348,19 @@ def compare_forbidden(
 
 
 def _load_candidate_records(workspace: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    """Load the candidate ledger, keeping per-record problems on the record.
+
+    The returned error list is the flattened view used by whole-run
+    verification. Promotion checks use each record's own ``_ledger_errors`` so
+    an unrelated malformed record cannot block a different candidate.
+    """
     records: list[dict[str, Any]] = []
     errors: list[str] = []
     candidates_path = workspace / "runs/candidates.jsonl"
     if not candidates_path.is_file():
         return records, errors
     seen: set[str] = set()
-    with candidates_path.open("r", encoding="utf-8") as handle:
+    with candidates_path.open("r", encoding="utf-8-sig") as handle:
         for line_number, line in enumerate(handle, 1):
             if not line.strip():
                 continue
@@ -1152,30 +1372,48 @@ def _load_candidate_records(workspace: Path) -> tuple[list[dict[str, Any]], list
             if not isinstance(record, dict):
                 errors.append(f"candidates.jsonl:{line_number}: record must be an object")
                 continue
+            record_errors: list[str] = []
             for field in ("id", "hypothesis", "correctness", "decision"):
                 if field not in record:
-                    errors.append(
+                    record_errors.append(
                         f"candidates.jsonl:{line_number}: missing field {field}"
                     )
             candidate_id = record.get("id")
             if candidate_id in seen:
-                errors.append(f"candidates.jsonl:{line_number}: duplicate id {candidate_id}")
+                record_errors.append(
+                    f"candidates.jsonl:{line_number}: duplicate id {candidate_id}"
+                )
             if candidate_id:
                 seen.add(candidate_id)
             if record.get("correctness") not in ("pass", "fail", "not_run"):
-                errors.append(f"candidates.jsonl:{line_number}: invalid correctness")
+                record_errors.append(
+                    f"candidates.jsonl:{line_number}: invalid correctness"
+                )
             decision = record.get("decision")
             if decision not in ("keep", "revise", "reject"):
-                errors.append(f"candidates.jsonl:{line_number}: invalid decision")
+                record_errors.append(f"candidates.jsonl:{line_number}: invalid decision")
             if decision in ("revise", "reject"):
                 if not record.get("reason"):
-                    errors.append(f"candidates.jsonl:{line_number}: rejected/revised candidate needs reason")
-                if record.get("rollback") not in ("restored_best", "not_needed", "failed"):
-                    errors.append(f"candidates.jsonl:{line_number}: rejected/revised candidate needs rollback")
+                    record_errors.append(
+                        f"candidates.jsonl:{line_number}: rejected/revised candidate needs reason"
+                    )
+                if record.get("rollback") not in (
+                    "restored_best",
+                    "not_needed",
+                    "failed",
+                ):
+                    record_errors.append(
+                        f"candidates.jsonl:{line_number}: rejected/revised candidate needs rollback"
+                    )
             if decision == "keep" and record.get("correctness") != "pass":
-                errors.append(f"candidates.jsonl:{line_number}: kept candidate must pass correctness")
+                record_errors.append(
+                    f"candidates.jsonl:{line_number}: kept candidate must pass correctness"
+                )
+            record["_ledger_errors"] = record_errors
+            errors.extend(record_errors)
             records.append(record)
     return records, errors
+
 
 
 def evaluate_goal(
@@ -1186,7 +1424,7 @@ def evaluate_goal(
     errors: list[str] = []
     if not path.is_file():
         return None, errors
-    with path.open("r", encoding="utf-8", newline="") as handle:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         required_columns = {
             "candidate",
@@ -1320,17 +1558,25 @@ def verify_evidence(
 
     if task is not None:
         quality = task.get("quality")
-        if quality is not None and quality.get("required", True):
-            quality_path = workspace / QUALITY_EVIDENCE
-            if not quality_path.is_file() or quality_path.stat().st_size == 0:
-                errors.append(f"missing or empty quality evidence: {QUALITY_EVIDENCE}")
+        quality_path = workspace / QUALITY_EVIDENCE
+        if not quality_path.is_file() or quality_path.stat().st_size == 0:
+            errors.append(
+                f"missing or empty quality evidence: {QUALITY_EVIDENCE.as_posix()}"
+            )
+        else:
+            try:
+                quality_result = json.loads(quality_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                errors.append(f"invalid quality evidence: {error}")
             else:
-                try:
-                    quality_result = json.loads(quality_path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError) as error:
-                    errors.append(f"invalid quality evidence: {error}")
-                else:
-                    checks = quality_result.get("checks") or {}
+                checks = quality_result.get("checks") or {}
+                import_passed = (
+                    isinstance(checks.get("import_paths"), dict)
+                    and checks["import_paths"].get("status") == "pass"
+                )
+                if not import_passed:
+                    errors.append("required absolute package import audit did not pass")
+                if quality is not None and quality.get("required", True):
                     checks_pass = all(
                         isinstance(checks.get(name), dict)
                         and checks[name].get("status") == "pass"
@@ -1338,14 +1584,17 @@ def verify_evidence(
                     )
                     if quality_result.get("status") != "pass" or not checks_pass:
                         errors.append("required quality gates did not pass")
-        tle_policy = (
-            task.get("extensions", {}).get("tle", {}).get("policy", "disabled")
-        )
-        if tle_policy != "disabled":
+        if _tle_policy(task) != "disabled":
             try:
-                load_tle_assessment(workspace, task)
+                assessment = load_tle_assessment(workspace, task)
             except ContractError as error:
-                errors.append(f"invalid or missing TLE assessment evidence: {error}")
+                errors.append(f"invalid or stale TLE assessment evidence: {error}")
+            else:
+                if assessment is None:
+                    errors.append(
+                        "missing TLE assessment evidence: runs/tle-assessment.json "
+                        "(run `kernelpilot assess-tle`)"
+                    )
 
         analysis = task.get("analysis", {})
         profile = _backend_profile(task) or {}
@@ -1358,7 +1607,7 @@ def verify_evidence(
             if not capabilities_path.is_file() or capabilities_path.stat().st_size == 0:
                 errors.append(
                     "missing or empty analysis-tool discovery evidence: "
-                    f"{ANALYSIS_CAPABILITIES}"
+                    f"{ANALYSIS_CAPABILITIES.as_posix()}"
                 )
 
     candidate_records, candidate_errors = _load_candidate_records(workspace)
@@ -1374,7 +1623,7 @@ def verify_evidence(
 
     benchmark_path = workspace / "runs/benchmark.csv"
     if benchmark_path.is_file():
-        with benchmark_path.open("r", encoding="utf-8", newline="") as handle:
+        with benchmark_path.open("r", encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
             if not reader.fieldnames:
                 errors.append("runs/benchmark.csv has no header")
@@ -1420,6 +1669,7 @@ def load_final_result(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
         "summary",
         "stop_reason",
         "workflow_issues",
+        "knowledge_publication",
     )
     missing = [field for field in required if field not in result]
     if missing:
@@ -1452,6 +1702,12 @@ When TLE is enabled, inspect its remote Wiki only through:
 - list: python3 {driver} remote list-wiki --workspace {workspace}
 - read: python3 {driver} remote read-wiki --workspace {workspace} --path <file-inside-wiki>
 """
+        if execution.get("container"):
+            remote_instructions += f"""
+The remote target is Docker container {execution['container']}. Contracted
+commands and allow-listed file synchronization are executed inside that
+container by the controlled adapter; the host workspace is not used.
+"""
     return f"""Read the task workspace's AGENTS.md and .kernelpilot/task.yaml, then follow
 the KDA workflow at {KDA_ROOT / 'workflows/kernel-optimization.yaml'} and the
 optimization prompt at {KDA_ROOT / 'prompts/optimize-kernel.md'}.
@@ -1466,7 +1722,7 @@ by the optimization prompt.
 Run every contracted command through the environment-aware wrapper:
 - discover backend analysis tools: python3 {driver} discover-tools --workspace {workspace}
 - assess TLE only when enabled: python3 {driver} assess-tle --workspace {workspace}
-- quality gates when configured: python3 {driver} run quality --workspace {workspace}
+- import audit and configured quality gates: python3 {driver} run quality --workspace {workspace}
 - correctness: python3 {driver} run correctness --workspace {workspace}
 - baseline, when configured: python3 {driver} run baseline --workspace {workspace}
 - benchmark: python3 {driver} run benchmark --workspace {workspace}
@@ -1491,6 +1747,7 @@ def run_codex(
     codex_bin: str,
     sandbox: str,
     dry_run: bool,
+    ssh_bin: str = "ssh",
 ) -> int:
     errors = validate_task(workspace, task)
     if errors:
@@ -1502,11 +1759,12 @@ def run_codex(
 
     execution = task.get("execution") or {"transport": "local"}
     remote = execution.get("transport", "local") == "ssh"
-    if remote and not dry_run:
-        pull_allowed(workspace, task)
-        before = {}
-    elif remote:
-        before = {}
+    if remote:
+        if not dry_run:
+            pull_allowed(workspace, task, ssh_bin)
+        # Forbidden paths are enforced on the executor too: the whole point of
+        # the guard is the run that edits remote files.
+        before = {} if dry_run else snapshot_forbidden_remote(task, ssh_bin)
     else:
         before = snapshot_forbidden(workspace, task)
     if not dry_run:
@@ -1553,6 +1811,8 @@ def run_codex(
                 command,
                 cwd=workspace,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 stdout=subprocess.PIPE,
                 stderr=None,
             )
@@ -1569,7 +1829,7 @@ def run_codex(
             returncode = process.wait()
     finally:
         try:
-            restoration = restore_checkpoint(workspace, task, "best")
+            restoration = restore_checkpoint(workspace, task, "best", ssh_bin)
         except (ContractError, SSHAdapterError, OSError, json.JSONDecodeError) as error:
             restoration_errors.append(f"automatic best-checkpoint restore failed: {error}")
 
@@ -1586,7 +1846,9 @@ def run_codex(
         + restoration_errors
         + verify_evidence(workspace, task, final_result)
     )
-    forbidden_changes = [] if remote else compare_forbidden(workspace, task, before)
+    forbidden_changes = compare_forbidden(
+        workspace, task, before, remote=remote, ssh_bin=ssh_bin
+    )
     state.update(
         {
             "stage": "complete"
@@ -1687,6 +1949,7 @@ def main(argv: list[str] | None = None) -> int:
     checkpoint_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     checkpoint_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
     checkpoint_parser.add_argument("--candidate")
+    checkpoint_parser.add_argument("--ssh-bin", default="ssh")
 
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
@@ -1703,6 +1966,7 @@ def main(argv: list[str] | None = None) -> int:
         default="workspace-write",
     )
     optimize_parser.add_argument("--dry-run", action="store_true")
+    optimize_parser.add_argument("--ssh-bin", default="ssh")
 
     args = parser.parse_args(argv)
     try:
@@ -1746,7 +2010,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ContractError("invalid task contract:\n- " + "\n- ".join(errors))
             assessment = assess_tle(args.workspace, task, args.ssh_bin)
             print(json.dumps(assessment, indent=2))
-            required = (task.get("analysis") or {}).get("extensions", {}).get("tle") == "required"
+            required = _tle_policy(task) == "required"
             return 2 if required and assessment.get("status") != "available" else 0
         if args.command == "remote":
             errors = validate_task(args.workspace, task)
@@ -1774,9 +2038,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.action == "save-best":
                 if not args.candidate:
                     raise ContractError("checkpoint save-best requires --candidate")
-                result = save_checkpoint(args.workspace, task, "best", args.candidate)
+                result = save_checkpoint(
+                    args.workspace, task, "best", args.candidate, require_evidence=True
+                )
             else:
-                result = restore_checkpoint(args.workspace, task, "best")
+                result = restore_checkpoint(args.workspace, task, "best", args.ssh_bin)
             print(json.dumps(result, indent=2))
             return 0
         if args.command == "validate":
@@ -1809,6 +2075,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.codex_bin,
                 args.sandbox,
                 args.dry_run,
+                ssh_bin=args.ssh_bin,
             )
     except (ContractError, SSHAdapterError, OSError, yaml.YAMLError) as error:
         print(f"kernelpilot: {error}", file=sys.stderr)

@@ -47,12 +47,14 @@ Each task should state:
 - Evaluation command, if different from validation.
 - Promotion criteria.
 
-An optional `quality` block can make repository-facing PR contracts executable.
-It runs five independent gates: public API import/export, module layering,
+KernelPilot always runs a built-in AST import-path audit, even without a
+`quality` block. It checks `implementation.path` plus any configured extra
+source paths and rejects relative imports such as `from .index import ...`;
+use the complete repository package path instead. An optional `quality` block
+adds five task-local PR gates: public API import/export, module layering,
 operator name and registry consistency, pytest marker collection, and unified
-operator dispatch. These checks are task-local because repositories use
-different package layouts and registry formats; their commands run in the same
-environment as correctness and benchmark.
+operator dispatch. Their commands run in the same environment as correctness
+and benchmark.
 
 ## Evidence Records
 
@@ -64,8 +66,8 @@ Use simple files in the task workspace:
 - `candidates.jsonl` for candidate names, parent links, and status.
 - `profile/` for profiler output or report summaries.
 - `runs/analysis-capabilities.json` for live backend-tool discovery evidence.
-- `runs/quality.json` for configured public API, module-layer, naming/registry,
-  pytest-marker, and unified-dispatch checks.
+- `runs/quality.json` for configured public API, module-layer, absolute-import,
+  naming/registry, pytest-marker, and unified-dispatch checks.
 - `runs/` or `outputs/` for generated artifacts.
 
 The exact format is less important than consistency. A future reader should be able to reconstruct what changed, what was measured, and why a candidate was promoted.
@@ -73,3 +75,22 @@ The exact format is less important than consistency. A future reader should be a
 ## Promotion Rule
 
 Promote a candidate only when it satisfies the task contract and has evidence that it improves or preserves the target metric. If a candidate is rejected, record the reason instead of silently discarding it.
+
+At every run's finalization—whether the goal was reached or a truthful
+target-not-reached result was recorded—the default workflow reviews the final
+best correct candidate for reusable knowledge. If the gain is material and
+the applicability is understood, run
+[`scripts/record_knowledge.py`](../scripts/record_knowledge.py) with the task
+workspace and candidate id. Place the note under the matching
+`backends/<vendor>/note/` directory when one exists, such as
+`backends/hygon/note/`; retain `knowledge/` as the generic fallback.
+
+The recorder verifies correctness, candidate decision, per-shape benchmark,
+aggregate gain, and regression gates before writing a Markdown note plus JSON
+record and updating the index. It requires the author to state the mechanism,
+validated scope, transfer lesson, and limitations; benchmark correlation alone
+is not accepted as a causal explanation. The default material-gain threshold
+is 5%, and it can be raised for noisy or high-impact tasks. If any gate fails
+or the result is not transferable, record the specific skip reason in the stage
+events and final report; do not publish it as confirmed knowledge. Publication
+failure must not affect restoration or reporting of the best correct candidate.

@@ -79,6 +79,13 @@ properties:
         type: string
         pattern: "^/"
         description: Absolute remote repository path. Required when transport is ssh.
+      container:
+        type: string
+        pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        description: >
+          Optional Docker container name on the SSH host. When set, contracted
+          commands and allow-listed file synchronization run inside this
+          container; workspace is resolved in the container filesystem.
 
   environment:
     type: object
@@ -168,16 +175,19 @@ properties:
     additionalProperties: false
     required: [public_api, module_layers, naming, pytest, dispatch]
     description: >
-      Optional PR-oriented quality gates. When present, all five checks make
-      the public API, module layering, operator naming/registry, pytest marker,
-      and unified dispatch contract explicit. Each command must be runnable in
-      the declared task environment and should fail when the contract is not
-      satisfied.
+      Optional PR-oriented quality gates. When present, all six checks make
+      the public API, module layering, absolute package imports, operator
+      naming/registry, pytest marker, and unified dispatch contract explicit.
+      KernelPilot also runs the import-path audit automatically; the other
+      commands must be runnable in the declared task environment and fail when
+      their contract is not satisfied.
     properties:
       required:
         type: boolean
         default: true
-        description: Whether a failed quality gate blocks the optimization loop.
+        description: >
+          Whether failed configured project PR gates block the optimization loop.
+          The built-in absolute-import audit remains mandatory regardless.
       public_api:
         type: object
         additionalProperties: false
@@ -214,6 +224,18 @@ properties:
           benchmark_paths:
             type: array
             items: {type: string}
+      import_paths:
+        type: object
+        additionalProperties: false
+        description: >
+          Built-in AST audit rejecting relative Python imports. If paths is
+          omitted or empty, KernelPilot scans implementation.path. Configure
+          additional allowed source paths when a task changes more Python files.
+        properties:
+          paths:
+            type: array
+            items: {type: string}
+            description: Optional repository-relative source paths to scan.
       naming:
         type: object
         additionalProperties: false

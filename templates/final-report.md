@@ -39,6 +39,13 @@
 List every candidate, including rejected and failed attempts, with its
 hypothesis, result, decision, reason, and rollback status.
 
+## Reusable optimization knowledge
+
+- Final best candidate reviewed:
+- Knowledge published (Markdown / JSON / index entry), or skipped:
+- Eligibility evidence and aggregate gain:
+- Skip or publication error reason, if applicable:
+
 ## Analysis summary
 
 - Detected backend and environment:

@@ -1,7 +1,10 @@
 import importlib.util
 import csv
+import hashlib
 import json
+import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +18,7 @@ SPEC = importlib.util.spec_from_file_location("kernelpilot", SCRIPT)
 kernelpilot = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(kernelpilot)
+controlled_ssh = sys.modules["controlled_ssh"]
 
 
 def valid_task():
@@ -92,11 +96,13 @@ class KernelPilotTests(unittest.TestCase):
     def test_quality_checks_write_machine_readable_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
+            (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
             task = valid_task()
             task["quality"] = {
                 "required": True,
                 "public_api": {"command": "true"},
                 "module_layers": {"command": "true"},
+                "import_paths": {},
                 "naming": {
                     "op_name": "example_attention",
                     "marker": "example_attention",
@@ -121,6 +127,7 @@ class KernelPilotTests(unittest.TestCase):
                 "required": True,
                 "public_api": {"command": "false"},
                 "module_layers": {"command": "true"},
+                "import_paths": {},
                 "naming": {
                     "op_name": "example_attention",
                     "marker": "example_attention",
@@ -134,6 +141,86 @@ class KernelPilotTests(unittest.TestCase):
             result = kernelpilot.run_quality_checks(workspace, task)
             self.assertEqual(result["status"], "fail")
             self.assertEqual(result["checks"]["public_api"]["status"], "fail")
+
+    def test_import_path_quality_gate_rejects_relative_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            source = workspace / "src/flag_attn/runtime/backend/_hygon/FLA"
+            source.mkdir(parents=True)
+            (source / "index.py").write_text("VALUE = 1\n", encoding="utf-8")
+            implementation = source / "operator.py"
+            implementation.write_text("from .index import VALUE\n", encoding="utf-8")
+            task = valid_task()
+            task["implementation"]["path"] = "src/flag_attn/runtime/backend/_hygon/FLA/operator.py"
+            task["constraints"]["allowed_paths"] = [
+                "src/flag_attn/runtime/backend/_hygon/FLA"
+            ]
+            task["quality"] = {
+                "required": True,
+                "public_api": {"command": "true"},
+                "module_layers": {"command": "true"},
+                "import_paths": {},
+                "naming": {
+                    "op_name": "example_attention",
+                    "marker": "example_attention",
+                    "registry": {"path": "operators.yaml", "id": "example_attention"},
+                    "command": "true",
+                },
+                "pytest": {"marker": "example_attention", "command": "true"},
+                "dispatch": {"operator_id": "example_attention", "command": "true"},
+            }
+            task["constraints"]["allowed_paths"].append("operators.yaml")
+
+            result = kernelpilot.run_quality_checks(workspace, task)
+
+            self.assertEqual(result["checks"]["import_paths"]["status"], "fail")
+            self.assertIn("operator.py:1", result["checks"]["import_paths"]["stderr"])
+            self.assertIn("from .index import", result["checks"]["import_paths"]["stderr"])
+
+    def test_import_path_audit_runs_without_quality_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("from .index import VALUE\n", encoding="utf-8")
+
+            result = kernelpilot.run_quality_checks(workspace, valid_task())
+
+            self.assertEqual(result["status"], "fail")
+            self.assertTrue(result["required"])
+            self.assertEqual(set(result["checks"]), {"import_paths"})
+
+    def test_import_path_quality_gate_accepts_repository_absolute_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            source = workspace / "src/flag_attn/runtime/backend/_hygon/FLA"
+            source.mkdir(parents=True)
+            (source / "operator.py").write_text(
+                "from flag_attn.runtime.backend._hygon.FLA.index import VALUE\n",
+                encoding="utf-8",
+            )
+            task = valid_task()
+            task["implementation"]["path"] = "src/flag_attn/runtime/backend/_hygon/FLA/operator.py"
+            task["constraints"]["allowed_paths"] = [
+                "src/flag_attn/runtime/backend/_hygon/FLA"
+            ]
+            task["quality"] = {
+                "required": True,
+                "public_api": {"command": "true"},
+                "module_layers": {"command": "true"},
+                "import_paths": {},
+                "naming": {
+                    "op_name": "example_attention",
+                    "marker": "example_attention",
+                    "registry": {"path": "operators.yaml", "id": "example_attention"},
+                    "command": "true",
+                },
+                "pytest": {"marker": "example_attention", "command": "true"},
+                "dispatch": {"operator_id": "example_attention", "command": "true"},
+            }
+            task["constraints"]["allowed_paths"].append("operators.yaml")
+
+            result = kernelpilot.run_quality_checks(workspace, task)
+
+            self.assertEqual(result["checks"]["import_paths"]["status"], "pass")
 
     def test_forbidden_change_is_detected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -254,6 +341,123 @@ class KernelPilotTests(unittest.TestCase):
             }
             self.assertEqual(kernelpilot.validate_task(workspace, task), [])
 
+    def test_remote_container_contract_does_not_require_local_implementation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            task = valid_task()
+            task["target"] = {"backend": "test", "device": "test"}
+            task["execution"] = {
+                "transport": "ssh",
+                "host": "hygon-bastion",
+                "workspace": "/workspace/FlagAttention",
+                "container": "jiangrenkai-dev",
+            }
+            self.assertEqual(kernelpilot.validate_task(workspace, task), [])
+
+    def test_remote_container_wraps_commands_and_stdin_sync(self):
+        task = valid_task()
+        task["execution"] = {
+            "transport": "ssh",
+            "host": "hygon-bastion",
+            "workspace": "/workspace/FlagAttention",
+            "container": "jiangrenkai-dev",
+        }
+        adapter = kernelpilot.ControlledSSH(task)
+        script = "set -euo pipefail\ncd -- /workspace/FlagAttention\ncat > candidate.py"
+        argv = adapter._argv(script)
+        self.assertEqual(argv[:4], ["ssh", "hygon-bastion", "bash", "-lc"])
+        quoted_remote_command = shlex.split(argv[4])
+        self.assertEqual(len(quoted_remote_command), 1)
+        remote_argv = shlex.split(quoted_remote_command[0])
+        self.assertEqual(
+            remote_argv[:4], ["docker", "exec", "-i", "jiangrenkai-dev"]
+        )
+        self.assertEqual(remote_argv[4:], ["bash", "-lc", script])
+
+    def test_remote_container_fetch_and_push_preserve_binary_bytes(self):
+        task = valid_task()
+        task["execution"] = {
+            "transport": "ssh",
+            "host": "hygon-bastion",
+            "workspace": "/workspace/FlagAttention",
+            "container": "jiangrenkai-dev",
+        }
+        adapter = kernelpilot.ControlledSSH(task)
+        payload = b"\x00\xffkernel\n"
+        digest = hashlib.sha256(payload).hexdigest()
+        completed = [
+            subprocess.CompletedProcess([], 0, payload, b""),
+            subprocess.CompletedProcess([], 0, f"{digest} kernel.py\n", ""),
+            subprocess.CompletedProcess([], 0, b"", b""),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "kernel.py"
+            with patch.object(controlled_ssh.subprocess, "run", side_effect=completed) as run:
+                self.assertEqual(adapter.fetch("kernel.py", destination), digest)
+                self.assertEqual(destination.read_bytes(), payload)
+                source = Path(directory) / "candidate.py"
+                source.write_bytes(payload)
+                self.assertEqual(adapter.push("kernel.py", source, digest), digest)
+
+        calls = run.call_args_list
+        fetch_argv = calls[0].args[0]
+        remote_fetch = shlex.split(shlex.split(fetch_argv[-1])[0])
+        self.assertEqual(remote_fetch[:4], ["docker", "exec", "-i", "jiangrenkai-dev"])
+        self.assertFalse(calls[0].kwargs["text"])
+        hash_argv = calls[1].args[0]
+        remote_hash = shlex.split(shlex.split(hash_argv[-1])[0])
+        self.assertEqual(remote_hash[:4], ["docker", "exec", "-i", "jiangrenkai-dev"])
+        push_argv = calls[2].args[0]
+        remote_push = shlex.split(shlex.split(push_argv[-1])[0])
+        self.assertEqual(remote_push[:4], ["docker", "exec", "-i", "jiangrenkai-dev"])
+        self.assertEqual(calls[2].kwargs["input"], payload)
+
+    def test_remote_container_name_rejects_shell_syntax(self):
+        task = valid_task()
+        task["execution"] = {
+            "transport": "ssh",
+            "host": "hygon-bastion",
+            "workspace": "/workspace/FlagAttention",
+            "container": "jiangrenkai-dev; touch /tmp/pwned",
+        }
+        with self.assertRaises(kernelpilot.SSHAdapterError):
+            kernelpilot.ControlledSSH(task)._argv("true")
+
+    def test_remote_container_requires_ssh_transport(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = valid_task()
+            task["execution"] = {"transport": "local", "container": "gpu"}
+            errors = kernelpilot.validate_task(Path(directory), task)
+            self.assertIn("execution.container requires execution.transport: ssh", errors)
+
+    def test_remote_state_is_bound_to_container(self):
+        task = valid_task()
+        task["execution"] = {
+            "transport": "ssh",
+            "host": "hygon-bastion",
+            "workspace": "/workspace/FlagAttention",
+            "container": "jiangrenkai-dev",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            control_workspace = Path(directory)
+            state_file = controlled_ssh.state_path(control_workspace)
+            state_file.parent.mkdir(parents=True)
+            state_file.write_text(
+                json.dumps(
+                    {
+                        "host": "hygon-bastion",
+                        "workspace": "/workspace/FlagAttention",
+                        "container": "another-container",
+                        "hashes": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                kernelpilot.SSHAdapterError, "target does not match"
+            ):
+                controlled_ssh._load_state(control_workspace, task)
+
     def test_remote_adapter_rejects_undeclared_path(self):
         task = valid_task()
         task["execution"] = {
@@ -277,6 +481,18 @@ class KernelPilotTests(unittest.TestCase):
         self.assertIn("Never invoke ssh, scp, rsync", prompt)
         self.assertIn("remote pull", prompt)
         self.assertIn("remote push", prompt)
+
+    def test_remote_container_prompt_explains_container_boundary(self):
+        task = valid_task()
+        task["execution"] = {
+            "transport": "ssh",
+            "host": "hygon-bastion",
+            "workspace": "/workspace/FlagAttention",
+            "container": "jiangrenkai-dev",
+        }
+        prompt = kernelpilot.build_prompt(Path("/controller"), task)
+        self.assertIn("Docker container jiangrenkai-dev", prompt)
+        self.assertIn("file synchronization", prompt)
 
     def test_analysis_strategy_selects_reference_profile_comparison(self):
         task = valid_task()
@@ -559,6 +775,215 @@ class KernelPilotTests(unittest.TestCase):
             _, errors = kernelpilot.load_final_result(path)
             self.assertTrue(errors)
             self.assertIn("stop_reason", errors[0])
+            self.assertIn("knowledge_publication", errors[0])
+
+    def _write_ledgers(self, workspace, candidate, decision, metric_value="0.8"):
+        (workspace / "runs").mkdir(exist_ok=True)
+        (workspace / "runs/candidates.jsonl").write_text(
+            json.dumps(
+                {
+                    "id": candidate,
+                    "hypothesis": "tile reuse",
+                    "correctness": "pass",
+                    "decision": decision,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with (workspace / "runs/benchmark.csv").open(
+            "w", encoding="utf-8", newline=""
+        ) as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "candidate",
+                    "shape",
+                    "metric_value",
+                    "baseline_value",
+                    "unit",
+                    "status",
+                ],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "candidate": candidate,
+                    "shape": "demo-shape",
+                    "metric_value": metric_value,
+                    "baseline_value": "1.0",
+                    "unit": "ms",
+                    "status": "pass",
+                }
+            )
+
+    def test_save_best_refuses_candidate_without_keep_decision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+            self._write_ledgers(workspace, "c1", "revise")
+            with self.assertRaises(kernelpilot.ContractError) as raised:
+                kernelpilot.save_checkpoint(
+                    workspace, valid_task(), "best", "c1", require_evidence=True
+                )
+            self.assertIn("not 'keep'", str(raised.exception))
+
+    def test_save_best_refuses_candidate_without_benchmark_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+            self._write_ledgers(workspace, "c1", "keep")
+            (workspace / "runs/benchmark.csv").unlink()
+            with self.assertRaises(kernelpilot.ContractError) as raised:
+                kernelpilot.save_checkpoint(
+                    workspace, valid_task(), "best", "c1", require_evidence=True
+                )
+            self.assertIn("no measured evidence", str(raised.exception))
+
+    def test_save_best_records_promotion_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("best\n", encoding="utf-8")
+            self._write_ledgers(workspace, "c1", "keep")
+            metadata = kernelpilot.save_checkpoint(
+                workspace, valid_task(), "best", "c1", require_evidence=True
+            )
+            self.assertTrue(metadata["promotion_evidence"]["target_reached"])
+            self.assertAlmostEqual(metadata["promotion_evidence"]["aggregate_ratio"], 0.8)
+            checkpoint = json.loads(
+                (workspace / ".kernelpilot/checkpoints/best/checkpoint.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(checkpoint["promotion_evidence"]["shapes"], 1)
+
+    def test_save_best_ignores_unrelated_malformed_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("best\n", encoding="utf-8")
+            self._write_ledgers(workspace, "c1", "keep")
+            with (workspace / "runs/candidates.jsonl").open(
+                "a", encoding="utf-8"
+            ) as handle:
+                # A rejected candidate without its required reason/rollback must
+                # not block promotion of a different, fully evidenced candidate.
+                handle.write(
+                    json.dumps(
+                        {
+                            "id": "c2",
+                            "hypothesis": "regressed",
+                            "correctness": "pass",
+                            "decision": "reject",
+                        }
+                    )
+                    + "\n"
+                )
+            metadata = kernelpilot.save_checkpoint(
+                workspace, valid_task(), "best", "c1", require_evidence=True
+            )
+            self.assertTrue(metadata["promotion_evidence"]["target_reached"])
+
+    def test_save_best_refuses_candidate_with_own_ledger_problem(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+            self._write_ledgers(workspace, "c1", "pass")
+            with self.assertRaises(kernelpilot.ContractError) as raised:
+                kernelpilot.save_checkpoint(
+                    workspace, valid_task(), "best", "c1", require_evidence=True
+                )
+            self.assertIn("invalid decision", str(raised.exception))
+
+    def test_verify_requires_tle_assessment_when_enabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "docs").mkdir()
+            for name in ("draft.md", "plan.md", "final-report.md"):
+                (workspace / "docs" / name).write_text("x\n", encoding="utf-8")
+            (workspace / "runs").mkdir()
+            for name in ("workflow-state.json", "stage-events.jsonl"):
+                (workspace / "runs" / name).write_text("{}\n", encoding="utf-8")
+            (workspace / "runs/candidates.jsonl").write_text(
+                json.dumps(
+                    {
+                        "id": "baseline",
+                        "hypothesis": "baseline",
+                        "correctness": "pass",
+                        "decision": "keep",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (workspace / "runs/benchmark.csv").write_text(
+                "candidate,shape,metric_value,baseline_value,unit,status\n"
+                "baseline,s1,1.0,1.0,ms,pass\n",
+                encoding="utf-8",
+            )
+            (workspace / "runs/quality.json").write_text(
+                json.dumps(
+                    {"status": "pass", "checks": {"import_paths": {"status": "pass"}}}
+                ),
+                encoding="utf-8",
+            )
+            task = valid_task()
+            task["analysis"] = {"extensions": {"tle": "required"}}
+            errors = kernelpilot.verify_evidence(workspace, task)
+            self.assertTrue(
+                any("missing TLE assessment evidence" in error for error in errors),
+                errors,
+            )
+
+    def test_tle_policy_is_read_from_analysis_extensions(self):
+        task = valid_task()
+        task["analysis"] = {"extensions": {"tle": "auto"}}
+        self.assertEqual(kernelpilot._tle_policy(task), "auto")
+        task["analysis"]["extensions"]["tle"] = "required"
+        self.assertEqual(kernelpilot._tle_policy(task), "required")
+        self.assertEqual(kernelpilot._tle_policy(valid_task()), "disabled")
+
+    def test_remote_forbidden_snapshot_parses_files_dirs_and_missing(self):
+        task = valid_task()
+        task["execution"] = {"transport": "ssh", "host": "gpu", "workspace": "/srv/op"}
+        task["constraints"]["forbidden_paths"] = [
+            "tests/bench.py",
+            "tests/data",
+            "tests/none.py",
+        ]
+        completed = subprocess.CompletedProcess(
+            [],
+            0,
+            "file\ttests/bench.py\tdeadbeef\n"
+            "dir\ttests/data\n"
+            "file\ttests/data/a.py\tcafe\n"
+            "missing\ttests/none.py\n",
+            "",
+        )
+        with patch.object(kernelpilot.ControlledSSH, "run_script", return_value=completed):
+            snapshot = controlled_ssh.hash_forbidden(task)
+        self.assertEqual(snapshot["tests/bench.py"], "deadbeef")
+        self.assertEqual(snapshot["tests/data/"], "dir")
+        self.assertEqual(snapshot["tests/data/a.py"], "cafe")
+        self.assertEqual(snapshot["tests/none.py"], "<missing>")
+
+    def test_remote_forbidden_change_is_detected(self):
+        task = valid_task()
+        task["execution"] = {"transport": "ssh", "host": "gpu", "workspace": "/srv/op"}
+        task["constraints"]["forbidden_paths"] = ["tests/bench.py"]
+        before_run = subprocess.CompletedProcess(
+            [], 0, "file\ttests/bench.py\tdeadbeef\n", ""
+        )
+        after_run = subprocess.CompletedProcess(
+            [], 0, "file\ttests/bench.py\tfeedface\n", ""
+        )
+        with patch.object(
+            kernelpilot.ControlledSSH, "run_script", side_effect=[before_run, after_run]
+        ):
+            before = kernelpilot.snapshot_forbidden_remote(task)
+            changed = kernelpilot.compare_forbidden(
+                Path("."), task, before, remote=True
+            )
+        self.assertEqual(changed, ["tests/bench.py"])
 
 
 if __name__ == "__main__":

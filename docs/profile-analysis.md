@@ -83,7 +83,7 @@ API can express, report the specific missing primitive as an extension request
 instead of inventing an API.
 
 For Hygon gfx936/BW tasks, use the dedicated
-[Hygon profiling workflow](hygon-profile.md). It routes kernel traces to
+[Hygon profiling workflow](../backends/hygon/note/profiling-workflow.md). It routes kernel traces to
 `rocprofv2`, timeline questions to `hipprof`, and uses `rocm-smi`/`rocminfo`
 only for device-state and architecture evidence.
 

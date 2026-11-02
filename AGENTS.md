@@ -28,9 +28,32 @@ This repository defines a reusable workflow for GPU kernel optimization.
     checkpoint. KernelPilot restores that checkpoint when the run exits.
 15. Keep metric handling generic: the task's metric, direction, unit, comparator,
     aggregation, and target mode define promotion.
-16. When a task declares PR quality gates, require a passing public API,
-    module-layer, naming/registry, pytest-marker, and unified-dispatch check
-    before benchmarking or promoting a candidate.
+16. Always run KernelPilot's built-in import-path audit for each optimization
+    task. Use repository-qualified absolute package imports for Python modules in
+    submitted code. For example, write
+    `from flag_attn.runtime.backend._hygon.FLA.index import ...`, not
+    `from .index import ...`. This is a Python module path, not a filesystem or
+    server path. The import audit is mandatory even when no `quality` block is
+    present. When PR quality gates are declared, also require passing public
+    API, module-layer, naming/registry, pytest-marker, and unified-dispatch
+    checks before benchmarking or promoting a candidate.
+17. At every optimization run's finalization, review the best correct candidate
+    for reusable knowledge. By default, publish a note with
+    `scripts/record_knowledge.py` when its correctness, benchmark, material-gain,
+    regression, and transferability gates pass; otherwise record why it was
+    skipped. Include the device, architecture, operator, applicability,
+    limitations, and evidence. Never publish rejected, failed, inconclusive,
+    or unsupported candidates as confirmed knowledge.
+18. After confirming the execution backend and device from the task contract and
+    live preflight, inspect the matching vendor notes under `backends/` before
+    forming optimization hypotheses. For Hygon, read
+    `backends/hygon/note/INDEX.md`; for another domestic accelerator, read the
+    corresponding `backends/<vendor>/note/INDEX.md` when present. Apply findings
+    only within their recorded scope and state when no matching notes exist.
+19. For Hygon performance analysis, require a usable profiler capture before
+    making bottleneck claims or promoting a candidate. Prefer rocprofv2 kernel
+    traces; use rocprof only after its task-local capture smoke test succeeds.
+    Record device-state and architecture probes as supporting context.
 
 ## Optimization loop
 
@@ -39,7 +62,7 @@ For every kernel optimization task:
 1. Read the task contract.
 2. Inspect the implementation and reference.
 3. Verify correctness.
-4. Run configured PR quality gates.
+4. Run the mandatory import-path audit and any configured PR quality gates.
 5. Establish baseline performance.
 6. Profile the current bottleneck when needed.
 7. Write an optimization hypothesis.
@@ -72,7 +95,9 @@ For every kernel optimization task:
 | Remote command dispatch and source synchronization | `scripts/controlled_ssh.py` |
 | "Which candidate is fastest right now" | `runs/candidates.jsonl`, `runs/benchmark.csv` |
 | Public API, module layers, naming/registry, pytest marker, and unified dispatch | `quality` in `.kernelpilot/task.yaml`, `runs/quality.json` |
+| Absolute package imports in submitted Python files | Mandatory built-in AST audit on every `run quality`; optional extra paths under `quality.import_paths`, evidence in `runs/quality.json` |
 | Which stage the task is currently in | the task workspace, not this repository |
+| Confirmed, reusable optimization lesson | `scripts/record_knowledge.py`; vendor-specific notes under `backends/<vendor>/note/`, with `knowledge/` as the generic fallback |
 
 The reusable loop is defined here; task-specific prompts, harnesses, and results
 stay in the task workspace. See [docs/agent-flow.md](docs/agent-flow.md) for the

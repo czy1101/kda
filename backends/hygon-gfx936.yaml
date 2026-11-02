@@ -20,9 +20,13 @@ analysis_tools:
     priority: 100
     probe: >-
       test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/rocprofiler/bin/rocprofv2"
-    version_command: >-
-      "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/rocprofiler/bin/rocprofv2"
-      --help
+    capabilities: [kernel_trace, counters, structured_export, reference_comparison]
+    skills: [skills/hygon-profile]
+  - id: rocprof
+    kind: kernel-profiler
+    priority: 90
+    probe: >-
+      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/rocprofiler/bin/rocprof"
     capabilities: [kernel_trace, counters, structured_export, reference_comparison]
     skills: [skills/hygon-profile]
   - id: hipprof
@@ -34,9 +38,36 @@ analysis_tools:
       "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/hip/bin/hipprof" -h
     capabilities: [timeline, structured_export, reference_comparison]
     skills: [skills/hygon-profile]
+  - id: rocsys
+    kind: profiler-controller
+    priority: 70
+    probe: >-
+      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/rocprofiler/bin/rocsys"
+    capabilities: [session_control, selective_capture]
+    skills: [skills/hygon-profile]
+  - id: rocminfo
+    kind: device-inspector
+    priority: 50
+    probe: >-
+      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/hip/bin/rocminfo"
+    capabilities: [device_architecture, runtime_agents]
+    skills: [skills/hygon-profile]
+  - id: rocm-smi
+    kind: device-inspector
+    priority: 40
+    probe: >-
+      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/bin/rocm-smi"
+    capabilities: [device_state, clocks, memory, utilization]
+    skills: [skills/hygon-profile]
+  - id: hy-smi
+    kind: device-inspector
+    priority: 40
+    probe: command -v hy-smi >/dev/null 2>&1
+    capabilities: [device_state, clocks, memory, utilization]
+    skills: [skills/hygon-profile]
 
 capabilities:
-  profilers: [rocprofv2, hipprof]
+  profilers: [rocprofv2, rocprof, hipprof]
   structured_profile_export: true
   reference_profile_comparison: true
   ai_profile_fallback: true
@@ -58,14 +89,43 @@ notes:
     rocprofv2 is the preferred Hygon kernel profiler for gfx936. Use its
     kernel-trace CSV and optional counter export as structured evidence.
   - >-
-    hipprof is a timeline fallback for launch gaps, synchronization, and
-    host/device overlap. Select it only when rocprofv2 is unavailable or when
-    a timeline question is being investigated.
+    rocprof is the legacy v1 kernel profiler and can collect API/kernel traces
+    and hardware counters. Its --list-basic probe succeeded in the current
+    xiaodan-dev DTK image. Use it as a counter/trace alternative after a
+    task-local capture smoke test; some DTK images have a stale path issue.
+  - >-
+    hipprof is the timeline profiler for launch gaps, synchronization, and
+    host/device overlap. Use it for timeline questions or when a timeline is
+    needed to explain end-to-end latency.
+  - >-
+    rocsys controls selective rocprofv2 sessions for long-running workloads;
+    it is a session controller, not an independent trace or counter analyzer.
   - >-
     rocm-smi/hy-smi and rocminfo are device-state and architecture probes, not
     kernel profilers. Run them in preflight/profile setup to record clocks,
     memory, topology, and the active gfx target.
   - >-
-    The legacy rocprof v1 command is not declared as a default tool because
-    some DTK images resolve a stale /opt/dtk-26.04/rocminfo path. Re-enable it
-    only after a task-local smoke test succeeds.
+    Use rocprofv2 as the default kernel profiler. Do not assume rocprof counter
+    capture works merely because its binary and counters are visible; require a
+    parseable task-local capture before using its metrics.
+  - >-
+    The validated BW/gfx936 reference image is Wave64 with 80 CU, 64 KiB
+    group/LDS, 32 KiB L1, 8 MiB L2, and a 1024-work-item workgroup limit. Use
+    these as launch constraints and re-probe them after a DTK or device change;
+    they are not a performance model or H100-equivalent ratio.
+  - >-
+    Large D2D copies measured about 1.35 TB/s and N=8192 PyTorch FP16/BF16
+    GEMM measured about 305 TFLOPS in one validated image. These are calibration
+    anchors only, not HBM theoretical or native FP8 peak values.
+  - >-
+    rocprofv2 counter names may be listed while a task-local -i capture still
+    produces no result file. Require a parseable counter export before making
+    numeric VMEM, VALU, LDS, or occupancy claims; use kernel trace and HSACO
+    evidence as the fallback.
+  - >-
+    Treat LDS tiling with software-managed double buffering as a testable
+    optimization candidate for kernels with reusable tiles and enough compute
+    to overlap loads. Do not equate it with TMA or a dedicated copy engine. The
+    current gfx936 DTK/LLVM probe did not produce a direct global-to-LDS path;
+    use the validated evidence and candidate gates in
+    backends/hygon/note/gfx936-validation.md.

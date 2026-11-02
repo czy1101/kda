@@ -22,12 +22,18 @@ This repository documents an early research prototype and remains under active d
 | `schemas/candidate.schema.json` | Candidate ledger record schema. |
 | `schemas/run-result.schema.json` | Structured result returned by automated Codex runs. |
 | `schemas/backend.schema.yaml` | Contract for backend-to-skill routing profiles. |
+| `schemas/optimization-knowledge.schema.json` | Schema for confirmed reusable optimization notes. |
 | `docs/evidence-format.md` | Canonical benchmark and candidate ledger format. |
+| `docs/optimization-knowledge.md` | Default evidence-gated publication of reusable optimization lessons. |
 | `docs/backend-extensions.md` | How to add a chip backend without growing prompts. |
-| `docs/hygon-profile.md` | Hygon gfx936/BW profiling workflow using rocprofv2 and hipprof. |
+| `backends/README.md` | Backend-specific optimization note routing and lookup rules. |
+| `backends/hygon/note/INDEX.md` | Hygon reports, optimization guides, and gfx936 validation notes. |
+| `skills/hygon-profile/SKILL.md` | Hygon profiler-stage router to the centralized note collection. |
 | `backends/` | Backend/architecture matching and stage-specific skill routing. |
 | `templates/task.yaml` | Fill-in task contract. |
+| `templates/optimization-knowledge.md` | Template for evidence-backed reusable knowledge. |
 | `templates/operator-workspace/` | Files to drop into an operator repository. |
+| `scripts/record_knowledge.py` | Evidence-gated Markdown/JSON knowledge publisher. |
 | `scripts/kernelpilot.py` | Minimal task validator, environment-aware command runner, and Codex driver. |
 | `scripts/controlled_ssh.py` | Allow-listed, hash-guarded adapter for execution-only GPU hosts. |
 | `CONTRIBUTING.md` | Contribution process and DCO sign-off requirements. |
@@ -105,12 +111,17 @@ non-interactive mode, captures JSONL events, checks required evidence, and
 rejects runs that modify explicitly forbidden paths. The agent still owns
 optimization judgment; the runner owns reproducibility and gates.
 
-Task contracts may also declare a `quality` block. Its five commands make
+KernelPilot always runs a built-in absolute-import audit, even if the task
+does not define a `quality` block. Task contracts may additionally declare a
+`quality` block. Its six gates make
 repository PR conventions executable without hard-coding a package layout:
-public API import/export, API/kernel/test/benchmark module layering, stable
-operator name and registry id, pytest marker collection, and unified operator
-dispatch. Results are written to `runs/quality.json`; required failures block
-promotion.
+public API import/export, API/kernel/test/benchmark module layering, absolute
+Python package imports, stable operator name and registry id, pytest marker
+collection, and unified operator dispatch. The built-in AST audit rejects
+relative imports in the implementation file and any configured source paths;
+internal imports should use the repository package path, such as
+`from flag_attn.runtime.backend._hygon.FLA.index import ...`. Results are
+written to `runs/quality.json`; required failures block promotion.
 
 ```bash
 # Validate the task and its environment preflight.
@@ -154,6 +165,13 @@ python3 <kda>/scripts/kernelpilot.py remote list-wiki --workspace <control-works
 The adapter is the normal execution boundary, not a substitute for operating
 system isolation: the agent instructions and Codex approval policy must also
 disallow direct `ssh`, `scp`, and `rsync` calls.
+
+For a Docker-backed executor, add `execution.container` to the task contract.
+The configured SSH host must be able to run `docker exec`; `execution.workspace`
+is interpreted inside the named container. Setup, preflight, correctness,
+benchmark, profiling, hash checks, and allow-listed file transfers all run
+inside it. Transfers stream through `docker exec -i` and still use the same
+allow-list, pre-push remote-hash check, and atomic temporary-file replacement.
 
 `codex exec` is launched with `--sandbox workspace-write`, JSONL event capture,
 and a structured final-output schema. The runner does not bypass the Codex

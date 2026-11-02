@@ -36,6 +36,7 @@ evidence:
   extension_analysis: docs/extension-analysis.md
   tle_assessment: runs/tle-assessment.json
   quality: runs/quality.json
+  reusable_knowledge: backends/<vendor>/note/ or knowledge/ (Markdown + JSON)
 
 stages:
 
@@ -88,9 +89,8 @@ stages:
     on_fail: finalize_without_target
 
   - id: quality
-    action: run_configured_pr_quality_gates
+    action: run_mandatory_import_audit_and_configured_pr_quality_gates
     on_pass: baseline
-    on_skip: baseline
     on_fail: finalize_without_target
 
   - id: baseline
@@ -202,9 +202,8 @@ stages:
     on_fail: reject_candidate
 
   - id: quality_candidate
-    action: run_configured_pr_quality_gates
+    action: run_mandatory_import_audit_and_configured_pr_quality_gates
     on_pass: benchmark_candidate
-    on_skip: benchmark_candidate
     on_fail: reject_candidate
 
   - id: benchmark_candidate
@@ -256,11 +255,20 @@ stages:
   # never relabel this outcome as a successful promotion.
   - id: finalize_without_target
     action: restore_best_and_record_stop_reason
-    next: report
+    next: knowledge_review
 
   - id: promote
     action: verify_scope_goal_and_evidence
-    next: report
+    next: knowledge_review
+
+  # Knowledge publication is a default finalization step, not a benchmark
+  # side effect. The agent checks the final best candidate and lets the
+  # evidence-gated recorder decide whether it is eligible for promotion.
+  - id: knowledge_review
+    action: publish_reusable_knowledge_if_eligible_or_record_skip_reason
+    on_published: report
+    on_not_eligible: report
+    on_publish_error: report
 
   - id: report
     action: generate_final_report
@@ -268,4 +276,4 @@ stages:
 
   - id: workflow_error
     action: record_workflow_error_restore_best_and_exit
-    next: report
+    next: knowledge_review

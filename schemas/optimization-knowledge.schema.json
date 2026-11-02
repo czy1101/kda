@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KDA Evidence-backed Optimization Knowledge",
+  "description": "Machine-readable companion to a reusable optimization note. Generated only for a correctness-passing, benchmark-approved KDA candidate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "title", "status", "created_at", "task", "backend", "device", "arch",
+    "language", "operator", "implementation", "metric", "direction", "aggregation",
+    "unit", "aggregate_ratio", "improvement_percent", "minimum_improvement_percent",
+    "mechanism", "applicability", "transferable_lesson", "limitations", "tested_shapes", "evidence"
+  ],
+  "properties": {
+    "id": {"type": "string"},
+    "title": {"type": "string"},
+    "status": {"const": "confirmed"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "task": {"type": "string"},
+    "backend": {"type": "string"},
+    "device": {"type": "string"},
+    "arch": {"type": "string"},
+    "language": {"type": "string"},
+    "operator": {"type": "string"},
+    "implementation": {"type": "string"},
+    "metric": {"type": "string"},
+    "direction": {"enum": ["minimize", "maximize"]},
+    "aggregation": {"enum": ["sum_ratio", "mean_ratio", "geomean_ratio", "all", "any"]},
+    "unit": {"type": "string"},
+    "aggregate_ratio": {"type": "number", "exclusiveMinimum": 0},
+    "improvement_percent": {"type": "number", "minimum": 0},
+    "minimum_improvement_percent": {"type": "number", "minimum": 0},
+    "mechanism": {"type": "string", "minLength": 1},
+    "applicability": {"type": "string", "minLength": 1},
+    "transferable_lesson": {"type": "string", "minLength": 1},
+    "limitations": {"type": "string", "minLength": 1},
+    "tested_shapes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["shape", "metric_value", "baseline_value", "unit", "directional_ratio", "improvement_percent", "status"],
+        "properties": {
+          "shape": {"type": "string"},
+          "metric_value": {"type": "number", "exclusiveMinimum": 0},
+          "baseline_value": {"type": "number", "exclusiveMinimum": 0},
+          "unit": {"type": "string"},
+          "directional_ratio": {"type": "number", "exclusiveMinimum": 0},
+          "improvement_percent": {"type": "number"},
+          "status": {"const": "pass"}
+        }
+      }
+    },
+    "evidence": {"type": "array", "minItems": 2, "items": {"type": "string"}}
+  }
+}

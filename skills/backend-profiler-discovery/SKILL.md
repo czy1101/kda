@@ -20,8 +20,11 @@ Select a tool for the question, not merely the highest-priority installed
 binary. Kernel-counter profilers suit execution-pipeline and memory diagnoses;
 timeline profilers suit launches, synchronization, overlap, and host gaps;
 framework profilers suit operator attribution; compiler/IR tools suit generated
-code and lowering questions. Use task `preferred_tools` only as an explicit
-override among compatible discovered tools.
+code and lowering questions. A profiler controller can control a capture but
+does not replace the underlying profiler. A device inspector records hardware
+state and architecture but is not performance-cause evidence. Do not select
+either helper as the primary profile capture tool. Use task `preferred_tools`
+only as an explicit override among compatible discovered profiler tools.
 
 Do not install packages, change drivers, enable privileged counters, alter
 clocks, or reconfigure the host unless separately authorized. When a probe,

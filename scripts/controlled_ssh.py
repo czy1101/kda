@@ -22,6 +22,7 @@ class SSHAdapterError(RuntimeError):
 
 
 _SAFE_HOST = re.compile(r"^[A-Za-z0-9_.@-]+$")
+_SAFE_CONTAINER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _SAFE_RELATIVE = re.compile(r"^[A-Za-z0-9_.+/@-]+$")
 
 
@@ -46,6 +47,11 @@ def _execution(task: dict[str, Any]) -> dict[str, Any]:
         raise SSHAdapterError("execution.workspace must be an absolute POSIX path")
     if "\n" in workspace or "\r" in workspace:
         raise SSHAdapterError("execution.workspace must be a single line")
+    container = execution.get("container")
+    if container is not None and (
+        not isinstance(container, str) or not _SAFE_CONTAINER.fullmatch(container)
+    ):
+        raise SSHAdapterError("execution.container contains unsupported characters")
     return execution
 
 
@@ -90,12 +96,21 @@ class ControlledSSH:
 
     def _argv(self, script: str, shell: str | None = None) -> list[str]:
         selected_shell = shell or (self.task.get("environment") or {}).get("shell", "bash")
+        remote_script = script
+        container = self.execution.get("container")
+        if container:
+            # Keep setup, workspace changes, commands, and stdin-based file sync
+            # inside the same container. `-i` is required by the allow-listed
+            # push path, which streams the candidate file through SSH stdin.
+            remote_script = shlex.join(
+                ["docker", "exec", "-i", container, selected_shell, "-lc", script]
+            )
         return [
             self.ssh_bin,
             self.execution["host"],
             selected_shell,
             "-lc",
-            shlex.quote(script),
+            shlex.quote(remote_script),
         ]
 
     def run_script(
@@ -105,12 +120,17 @@ class ControlledSSH:
         shell: str | None = None,
         capture: bool = False,
         input_bytes: bytes | None = None,
+        text: bool | None = None,
     ) -> subprocess.CompletedProcess:
+        if text is None:
+            text = input_bytes is None
         return subprocess.run(
             self._argv(script, shell),
             input=input_bytes,
             capture_output=capture,
-            text=input_bytes is None,
+            text=text,
+            encoding="utf-8" if text else None,
+            errors="replace" if text else None,
             check=False,
         )
 
@@ -143,6 +163,7 @@ class ControlledSSH:
         result = self.run_script(
             f"set -euo pipefail\ncd -- {workspace}\ncat -- {target}",
             capture=True,
+            text=False,
         )
         if result.returncode != 0:
             stderr = result.stderr.strip() if isinstance(result.stderr, bytes) else result.stderr
@@ -173,7 +194,10 @@ class ControlledSSH:
             (
                 "set -euo pipefail",
                 f"cd -- {workspace}",
-                f"test -d -- {parent}",
+                # POSIX `test` does not accept the `--` option separator;
+                # the path is already shell-quoted and cannot begin with '-'
+                # because it is a validated repository-relative path.
+                f"test -d {parent}",
                 "tmp=$(mktemp .kernelpilot-upload.XXXXXX)",
                 "trap 'rm -f -- \"$tmp\"' EXIT",
                 "cat > \"$tmp\"",
@@ -207,6 +231,7 @@ def pull_allowed(control_workspace: Path, task: dict[str, Any], ssh_bin: str = "
     state = {
         "host": adapter.execution["host"],
         "workspace": adapter.execution["workspace"],
+        "container": adapter.execution.get("container"),
         "hashes": hashes,
     }
     output = state_path(control_workspace)
@@ -221,7 +246,11 @@ def _load_state(control_workspace: Path, task: dict[str, Any]) -> dict[str, Any]
         raise SSHAdapterError("run `kernelpilot remote pull` before pushing")
     state = json.loads(path.read_text(encoding="utf-8"))
     execution = _execution(task)
-    if state.get("host") != execution["host"] or state.get("workspace") != execution["workspace"]:
+    if (
+        state.get("host") != execution["host"]
+        or state.get("workspace") != execution["workspace"]
+        or state.get("container") != execution.get("container")
+    ):
         raise SSHAdapterError("remote-state target does not match the task contract")
     return state
 
@@ -247,6 +276,55 @@ def push_allowed(control_workspace: Path, task: dict[str, Any], ssh_bin: str = "
     return changed
 
 
+def _forbidden_paths(task: dict[str, Any]) -> list[str]:
+    values = (task.get("constraints") or {}).get("forbidden_paths") or []
+    return [_relative_path(value) for value in values if isinstance(value, str)]
+
+
+def hash_forbidden(task: dict[str, Any], ssh_bin: str = "ssh") -> dict[str, str]:
+    """Hash contract-declared forbidden paths on the executor without copying them.
+
+    A read-only counterpart to the local snapshot: files contribute their
+    sha256, directories contribute a marker plus every file below them, and a
+    missing path keeps the same ``<missing>`` sentinel the local snapshot uses
+    so that creating it later is detected as a change.
+    """
+    paths = _forbidden_paths(task)
+    if not paths:
+        return {}
+    adapter = ControlledSSH(task, ssh_bin=ssh_bin)
+    workspace = shlex.quote(adapter.execution["workspace"])
+    lines = ["set -euo pipefail", f"cd -- {workspace}"]
+    for relative in paths:
+        quoted = shlex.quote(relative)
+        lines.append(
+            f"if [ -f {quoted} ]; then "
+            f"printf 'file\\t%s\\t%s\\n' {quoted} "
+            f"\"$(sha256sum -- {quoted} | cut -d' ' -f1)\"; "
+            f"elif [ -d {quoted} ]; then "
+            f"printf 'dir\\t%s\\n' {quoted}; "
+            f"find -P -- {quoted} -type f -print0 | sort -z | "
+            f"while IFS= read -r -d '' entry; do "
+            f"printf 'file\\t%s\\t%s\\n' \"$entry\" "
+            f"\"$(sha256sum -- \"$entry\" | cut -d' ' -f1)\"; done; "
+            f"else printf 'missing\\t%s\\n' {quoted}; fi"
+        )
+    result = adapter.run_script("\n".join(lines), capture=True)
+    if result.returncode != 0:
+        stderr = result.stderr.strip() if isinstance(result.stderr, str) else ""
+        raise SSHAdapterError(f"cannot hash remote forbidden paths: {stderr}")
+    snapshot: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if parts[0] == "file" and len(parts) == 3:
+            snapshot[parts[1]] = parts[2]
+        elif parts[0] == "dir" and len(parts) == 2:
+            snapshot[parts[1].rstrip("/") + "/"] = "dir"
+        elif parts[0] == "missing" and len(parts) == 2:
+            snapshot[parts[1]] = "<missing>"
+    return snapshot
+
+
 def inspect_remote(task: dict[str, Any], ssh_bin: str = "ssh") -> dict[str, Any]:
     adapter = ControlledSSH(task, ssh_bin=ssh_bin)
     environment = task.get("environment") or {}
@@ -255,6 +333,7 @@ def inspect_remote(task: dict[str, Any], ssh_bin: str = "ssh") -> dict[str, Any]
         "transport": "ssh",
         "host": adapter.execution["host"],
         "workspace": adapter.execution["workspace"],
+        "container": adapter.execution.get("container"),
         "allowed_paths": _allowed_paths(task),
     }
     if preflight:
@@ -279,7 +358,7 @@ def list_tle_wiki(task: dict[str, Any], ssh_bin: str = "ssh") -> list[str]:
     script = (
         "set -euo pipefail\n"
         f"cd -- {workspace}\n"
-        f"test -d -- {quoted_root}\n"
+        f"test -d {quoted_root}\n"
         f"find -P -- {quoted_root} -type f -print"
     )
     result = adapter.run_script(script, capture=True)
@@ -312,7 +391,7 @@ def read_tle_wiki(task: dict[str, Any], relative: str, ssh_bin: str = "ssh") -> 
             f"root_real=$(realpath -- {quoted_root})",
             f"target_real=$(realpath -- {quoted_target})",
             'case "$target_real" in "$root_real"/*) ;; *) exit 13 ;; esac',
-            'test -f -- "$target_real"',
+            'test -f "$target_real"',
             'cat -- "$target_real"',
         )
     )

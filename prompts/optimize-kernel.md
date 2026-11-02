@@ -21,6 +21,12 @@ and recovery in `runs/stage-events.jsonl` and the final report.
   generalization checks pass. Restore the best after every rejected candidate.
 - Do not modify the task comparator, reference, tests, benchmark, or forbidden
   paths after measurement begins.
+- In submitted Python code, use the repository's complete absolute package
+  import path (for example, `from flag_attn.runtime.backend._hygon.FLA.index
+  import ...`), never a relative import such as `from .index import ...`.
+  This refers to a Python module path, not a server or filesystem path.
+  KernelPilot's built-in `import_paths` audit checks the implementation file on
+  every task and must pass before benchmarking or promoting a candidate.
 - Never fabricate measurements, hide failures, or force an optimization when
   evidence does not support one. Do not hard-code benchmark shapes, expected
   values, or public test cases. Shape-dependent logic needs task authorization,
@@ -30,15 +36,17 @@ and recovery in `runs/stage-events.jsonl` and the final report.
 
 1. Inspect the operator and reference, then write `docs/draft.md` and
    `docs/plan.md` before implementation.
-2. Establish correctness and the configured original/reference baseline, and
-   run the configured PR quality gates, then record the baseline candidate
-   before evaluating optimized candidates.
+2. Establish correctness, run `kernelpilot.py run quality` (the mandatory
+   absolute-import audit always runs; configured PR gates run when present),
+   then establish the configured original/reference baseline and record the
+   baseline candidate before evaluating optimized candidates.
 3. Diagnose the current bottleneck from source and measurements. Profile only
    when it can distinguish concrete competing hypotheses.
 4. State one falsifiable hypothesis and implement one coherent candidate.
-5. Run correctness and, when `.kernelpilot/task.yaml` contains `quality`, run
-   `kernelpilot.py run quality`. Benchmark only candidates that pass both gates
-   across the full required shape set, then run configured generalization checks.
+5. Run correctness and `kernelpilot.py run quality` after every candidate.
+   Benchmark only candidates that pass correctness, the mandatory import audit,
+   and all required configured gates across the full required shape set; then
+   run configured generalization checks.
 6. Record every kept, revised, rejected, failed, or regressed candidate with a
    reason and rollback result. Save the checkpoint for a correct improved
    candidate, then evaluate the configured goal from raw benchmark records.
@@ -62,6 +70,24 @@ If `target.profile` is present, validate and use it. Otherwise use the unique
 backend profile matching the declared backend/device/architecture/language. Do
 not guess when multiple profiles match; continue without vendor-specific
 guidance when none matches.
+
+After the contracted environment preflight confirms the actual backend and
+device, inspect reusable optimization notes under `backends/` before writing a
+hypothesis. Use `backends/hygon/note/INDEX.md` for Hygon and the corresponding
+`backends/<vendor>/note/INDEX.md` for another domestic accelerator when it
+exists. Check device, architecture, language, operator, and workload scope;
+notes are evidence to guide experiments, not substitutes for task-local
+correctness and benchmarks. If the matching directory or notes are absent,
+record that and proceed from task-local evidence.
+
+For Hygon performance analysis, capture the candidate with `rocprofv2` kernel
+trace and capture the comparable reference when available. Do not make a
+bottleneck claim or promote a candidate without a usable profiler capture. Use
+`rocprof` only after a task-local capture smoke test succeeds; use `hipprof`
+for timeline questions and `rocsys` only to control selective captures of
+long-running workloads. Record `rocm-smi` or `hy-smi` plus `rocminfo` device
+state and architecture probes. If profiler capture fails, preserve the error
+and report the performance cause as unconfirmed.
 
 Run backend tool discovery in the exact task environment. A backend declaration
 is a probe allowlist, not proof that a tool is installed or usable. Select only
@@ -111,6 +137,31 @@ Before each stage, update `runs/workflow-state.json`. After each stage, append
 the action, result, evidence, and selected transition to
 `runs/stage-events.jsonl`. Keep the candidate and benchmark ledgers consistent
 with their schemas.
+
+### Default reusable-knowledge publication
+
+At finalization—whether the task target was reached or the run stopped with an
+evidence-backed gap—review the final best correct candidate for reusable
+optimization knowledge. This review is mandatory by default:
+
+1. Publish only if the candidate is recorded as `keep`, correctness passed,
+   every configured benchmark shape has a passing result, the configured
+   aggregate shows a material gain (at least the recorder's default 5%), no
+   configured regression limit is violated, and the mechanism and applicability
+   are understood well enough to teach safely.
+2. When eligible, run `scripts/record_knowledge.py` from the KDA repository
+   with the task workspace, candidate id, evidence-backed mechanism, validated
+   applicability, transferable lesson, limitations, and supporting evidence.
+   Do not lower the default material-gain threshold just to force publication.
+3. Verify that the Markdown note, JSON sidecar, and knowledge index entry were
+   created. If ineligible, record the concrete gate that failed and keep the
+   result only in the task candidate/report artifacts. Rejected, failed,
+   inconclusive, or non-transferable candidates must never be labeled confirmed.
+4. Record the publication or skip result in `runs/stage-events.jsonl` and
+   `docs/final-report.md`. A recorder error must be reported and must not change
+   the selected best-correct implementation or be presented as a published note.
+   Return the same outcome in the structured result's `knowledge_publication`
+   object (`status`, `notes`, and `reason`).
 
 Finish with `docs/final-report.md` using `templates/final-report.md`, and return
 the structured result required by `schemas/run-result.schema.json`. The report

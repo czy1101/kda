@@ -10,7 +10,8 @@
     "correctness",
     "summary",
     "stop_reason",
-    "workflow_issues"
+    "workflow_issues",
+    "knowledge_publication"
   ],
   "properties": {
     "status": {"enum": ["complete", "stopped", "blocked"]},
@@ -44,6 +45,20 @@
           "message": {"type": "string"},
           "recovery": {"type": "string"}
         }
+      }
+    },
+    "knowledge_publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "notes", "reason"],
+      "properties": {
+        "status": {"enum": ["published", "skipped", "error"]},
+        "notes": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Published Markdown/JSON/index paths, or an empty array when skipped."
+        },
+        "reason": {"type": "string"}
       }
     },
     "restored_candidate": {

@@ -20,12 +20,17 @@ Use the same runner for an optional separate baseline command. Save a correct,
 improved candidate with `checkpoint save-best`; KernelPilot restores that
 checkpoint when the optimization process exits.
 
-If `.kernelpilot/task.yaml` contains a `quality` block, run
-`scripts/kernelpilot.py run quality` before the baseline and after each
-candidate's correctness pass. The quality gates cover the public API import,
+Always run `scripts/kernelpilot.py run quality` before the baseline and after
+each candidate's correctness pass. The built-in import audit runs on every
+task. If `.kernelpilot/task.yaml` contains a `quality` block, the additional
+gates cover the public API import,
 API/kernel/test/benchmark module layering, stable operator name and registry
-identifier, pytest marker collection, and unified operator dispatch. A required
-quality gate must pass before a candidate may be benchmarked or promoted.
+identifier, pytest marker collection, and unified operator dispatch. The
+built-in import-path audit checks `implementation.path` and any configured
+source paths, and rejects relative Python imports such as
+`from .index import ...`; use the repository-qualified module path,
+which is distinct from a server filesystem path. A required quality gate must
+pass before a candidate may be benchmarked or promoted.
 
 When `execution.transport` is `ssh`, Codex remains on the controller. Never
 invoke `ssh`, `scp`, or `rsync` directly. Use `kernelpilot.py remote pull` to
@@ -96,9 +101,9 @@ promotion, and retain the per-shape measurements in `runs/benchmark.csv`.
 | `docs/draft.md` | Initial plan draft. Required before implementation starts. |
 | `docs/plan.md` | The executable plan. |
 | `runs/candidates.jsonl` | One JSON record per candidate: id, parent, hypothesis, changes, correctness, latency, baseline, speedup, decision, reason. |
-| `runs/benchmark.csv` | Per-shape measurements with columns `candidate,shape,metric_value,baseline_value,unit,status`. The runner recomputes promotion from these values. |
+| `runs/benchmark.csv` | Per-shape measurements with columns `candidate,shape,metric_value,baseline_value,unit,status`. `checkpoint save-best` recomputes promotion from these values and refuses a candidate without recorded, passing rows. |
 | `runs/analysis-capabilities.json` | Backend-declared tools probed in this exact environment, with availability, versions, and default selection. |
-| `runs/quality.json` | Results of the configured public API, module-layer, naming/registry, pytest-marker, and unified-dispatch gates. |
+| `runs/quality.json` | Results of the configured public API, module-layer, absolute-import, naming/registry, pytest-marker, and unified-dispatch gates. |
 | `profile/` | Profiler output or report summaries. |
 
 A future reader must be able to reconstruct what changed, what was measured, and

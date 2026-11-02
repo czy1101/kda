@@ -1,0 +1,94 @@
+{
+  "id": "c003",
+  "title": "Fuse BF16 K=V=64 GLA intra-tile output on gfx936",
+  "status": "confirmed",
+  "created_at": "2026-10-27T06:31:58+00:00",
+  "task": "flagattention-chunk-gla-bw1000",
+  "backend": "hygon",
+  "device": "BW",
+  "arch": "gfx936",
+  "language": "triton",
+  "operator": "flag_attn.runtime.backend._hygon.FLA.gla.chunk_gla",
+  "implementation": "src/flag_attn/runtime/backend/_hygon/FLA/gla/chunk_gla.py",
+  "metric": "latency",
+  "direction": "minimize",
+  "aggregation": "geomean_ratio",
+  "unit": "ms",
+  "aggregate_ratio": 1.338258676831753,
+  "improvement_percent": 33.825867683175304,
+  "minimum_improvement_percent": 5.0,
+  "mechanism": "The fused producer computes a full 64x64 intra-chunk A tile and immediately consumes it in A@V within the same CTA. For K=V=64 there is one K tile and one V tile, so this avoids writing the FP32 A intermediate to global memory, reading it again in the output kernel, and launching that separate output stage without duplicating A computation.",
+  "applicability": "Validated on Hygon BW/gfx936, BF16 inference with K=64 and V=64, no gradients, no initial state, no final-state output, non-varlen input, and state_v_first=False. Seven shapes varying B, T, and H passed output checks and three alternating-order A/B rounds.",
+  "transferable_lesson": "For small square GLA head dimensions where a CTA can hold one complete intra-chunk A tile and one V tile, test fusing A@V with output to remove the global intermediate and launch. Match BC/K/V tile widths so the fused path does not decompose a baseline-wide tile into repeated subtiles. Always compare end-to-end latency and resource pressure; larger V can make fusion slower.",
+  "limitations": "Do not enable for K/V=128: the broad fusion candidate was 1.5–1.7x slower on tested cases. FP16, FP32, varlen, initial/final state, state_v_first, backward, and dimensions other than K=V=64 are not validated. rocprofv2 kernel-trace did not finish, so no PMC/LDS-bottleneck claim is made. The full public benchmark improvement was limited to the eligible D=64 case, while the seven-case held-out family produced the recorded geomean gain.",
+  "tested_shapes": [
+    {
+      "shape": "B=1,T=1024,H=8,K=64,V=64,bf16",
+      "metric_value": 0.3126,
+      "baseline_value": 0.4414,
+      "unit": "ms",
+      "directional_ratio": 1.4120281509916828,
+      "improvement_percent": 41.202815099168276,
+      "status": "pass"
+    },
+    {
+      "shape": "B=2,T=1024,H=8,K=64,V=64,bf16",
+      "metric_value": 0.3109,
+      "baseline_value": 0.4396,
+      "unit": "ms",
+      "directional_ratio": 1.4139594724991957,
+      "improvement_percent": 41.39594724991957,
+      "status": "pass"
+    },
+    {
+      "shape": "B=4,T=1024,H=8,K=64,V=64,bf16",
+      "metric_value": 0.3078,
+      "baseline_value": 0.4518,
+      "unit": "ms",
+      "directional_ratio": 1.4678362573099413,
+      "improvement_percent": 46.783625730994125,
+      "status": "pass"
+    },
+    {
+      "shape": "B=4,T=2048,H=16,K=64,V=64,bf16",
+      "metric_value": 0.413,
+      "baseline_value": 0.5018,
+      "unit": "ms",
+      "directional_ratio": 1.2150121065375303,
+      "improvement_percent": 21.501210653753034,
+      "status": "pass"
+    },
+    {
+      "shape": "B=8,T=2048,H=32,K=64,V=64,bf16",
+      "metric_value": 1.4113,
+      "baseline_value": 1.7584,
+      "unit": "ms",
+      "directional_ratio": 1.2459434563877276,
+      "improvement_percent": 24.594345638772765,
+      "status": "pass"
+    },
+    {
+      "shape": "B=8,T=4096,H=8,K=64,V=64,bf16",
+      "metric_value": 0.8051,
+      "baseline_value": 0.9939,
+      "unit": "ms",
+      "directional_ratio": 1.2345050304310023,
+      "improvement_percent": 23.450503043100234,
+      "status": "pass"
+    },
+    {
+      "shape": "B=16,T=512,H=8,K=64,V=64,bf16",
+      "metric_value": 0.3201,
+      "baseline_value": 0.4493,
+      "unit": "ms",
+      "directional_ratio": 1.4036238675413932,
+      "improvement_percent": 40.36238675413932,
+      "status": "pass"
+    }
+  ],
+  "evidence": [
+    "runs/candidates.jsonl",
+    "runs/benchmark.csv",
+    "docs/evidence-c003.md"
+  ]
+}

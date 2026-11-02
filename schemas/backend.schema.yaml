@@ -56,7 +56,7 @@ properties:
           minLength: 1
         kind:
           type: string
-          enum: [kernel-profiler, timeline-profiler, framework-profiler, compiler-tool, profiler]
+          enum: [kernel-profiler, timeline-profiler, framework-profiler, compiler-tool, profiler, profiler-controller, device-inspector]
         priority:
           type: integer
         probe:
