@@ -38,6 +38,7 @@ This repository documents an early research prototype and remains under active d
 | `scripts/record_knowledge.py` | Evidence-gated Markdown/JSON knowledge publisher. |
 | `scripts/record_rejection.py` | Negative-knowledge recorder for measured rejections. |
 | `scripts/knowledge_index.py` | Generates each note root's `INDEX.md`; `--check` gates CI. |
+| `scripts/knowledge_audit.py` | Reports stale, unbound, overdue, and conflicting notes. |
 | `scripts/kernelpilot.py` | Minimal task validator, environment-aware command runner, and Codex driver. |
 | `scripts/controlled_ssh.py` | Allow-listed, hash-guarded adapter for execution-only GPU hosts. |
 | `CONTRIBUTING.md` | Contribution process and DCO sign-off requirements. |

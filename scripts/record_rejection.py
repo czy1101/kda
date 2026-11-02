@@ -29,6 +29,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from knowledge_index import (  # noqa: E402
     INDEX_NAME,
     KnowledgeIndexError,
+    mark_superseded,
     parse_front_matter,
     write_index,
 )
@@ -63,7 +64,7 @@ def render_rejection(
     observed: str,
     reason: str,
     retry_when: str,
-    evidence: list[str],
+    evidence: list[str] | None = None,
     rejected_on: str,
 ) -> tuple[dict[str, Any], str]:
     front = {
@@ -161,6 +162,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--evidence", action="append", default=[], help="Artifact or note path; repeatable")
     parser.add_argument("--date", dest="rejected_on", default=date.today().isoformat())
     parser.add_argument("--update", action="store_true", help="Revise an existing rejection note")
+    parser.add_argument(
+        "--supersede",
+        help="Note id or path that this rejection replaces; the old note is marked superseded",
+    )
+    parser.add_argument(
+        "--revalidate-of",
+        help="Alias of --supersede for a re-measured answer to the same question",
+    )
     args = parser.parse_args(argv)
     try:
         root = (args.root or (REPO_ROOT / "backends/hygon/note")).resolve()
@@ -180,6 +189,16 @@ def main(argv: list[str] | None = None) -> int:
             rejected_on=_require("--date", args.rejected_on),
         )
         path = write_rejection(root, front["id"], markdown, update=args.update)
+        retired = args.supersede or args.revalidate_of
+        if retired:
+            by = path.relative_to(root).as_posix()
+            try:
+                old = mark_superseded(root, retired, by)
+            except KnowledgeIndexError as error:
+                raise RejectionError(
+                    f"note published, but `{retired}` could not be superseded: {error}"
+                ) from error
+            print(f"superseded: {old.relative_to(root).as_posix()}")
     except (RejectionError, KnowledgeIndexError, OSError) as error:
         print(f"record_rejection: {error}", file=sys.stderr)
         return 2

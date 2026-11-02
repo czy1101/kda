@@ -20,7 +20,7 @@ import argparse
 import json
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -175,6 +175,8 @@ def _rejection_line(entry: dict[str, Any]) -> str:
         detail.insert(0, f"`{entry['operator']}`")
     if entry["retry_when"]:
         detail.append(f"retry when {entry['retry_when'].rstrip('.')}")
+    if entry["status"] != "rejected":
+        detail.append(f"**{entry['status']}**")
     return f"- [{entry['title']}]({entry['path']}) — {'; '.join(detail)}."
 
 
@@ -247,6 +249,99 @@ def write_index(root: Path) -> tuple[Path, bool]:
         return index, False
     index.write_text(content, encoding="utf-8")
     return index, True
+
+
+def find_note(root: Path, identifier: str) -> Path:
+    """Resolve a note by recorded id, relative path, or bare filename."""
+    requested = PurePosixPath(identifier)
+    if requested.suffix == ".md":
+        direct = root / identifier
+        if direct.is_file():
+            return direct
+        same_name = [
+            path
+            for path in sorted(root.rglob("*.md"))
+            if path.name == requested.name and path.name != INDEX_NAME
+        ]
+        if len(same_name) == 1:
+            return same_name[0]
+        if not same_name:
+            raise KnowledgeIndexError(f"no note named {identifier!r} under {root}")
+        listed = ", ".join(path.relative_to(root).as_posix() for path in same_name)
+        raise KnowledgeIndexError(
+            f"ambiguous note name {identifier!r}: {listed}; pass a note path instead"
+        )
+    matches: list[Path] = []
+    for path in sorted(root.rglob("*.md")):
+        if path.name == INDEX_NAME:
+            continue
+        sibling = path.with_suffix(".json")
+        if sibling.is_file():
+            try:
+                record = json.loads(sibling.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as error:
+                raise KnowledgeIndexError(f"{sibling}: {error}") from error
+            if isinstance(record, dict) and record.get("id") == identifier:
+                matches.append(path)
+        else:
+            front = parse_front_matter(path) or {}
+            if str(front.get("id")) == identifier:
+                matches.append(path)
+    if not matches:
+        raise KnowledgeIndexError(f"no note with id {identifier!r} under {root}")
+    if len(matches) > 1:
+        listed = ", ".join(path.relative_to(root).as_posix() for path in matches)
+        raise KnowledgeIndexError(
+            f"ambiguous note id {identifier!r}: {listed}; pass a note path instead"
+        )
+    return matches[0]
+
+
+def _rewrite_front_matter(path: Path, front: dict[str, Any]) -> None:
+    text = path.read_text(encoding="utf-8")
+    match = FRONT_MATTER.match(text)
+    if not match:
+        raise KnowledgeIndexError(f"{path}: no front matter to rewrite")
+    body = text[match.end() :]
+    block = yaml.safe_dump(front, sort_keys=False, allow_unicode=True).strip()
+    path.write_text(f"---\n{block}\n---\n{body}", encoding="utf-8")
+
+
+def mark_superseded(
+    root: Path,
+    identifier: str,
+    superseded_by: str,
+) -> Path:
+    """Retire a note without deleting it, then refresh the index.
+
+    Result notes keep their JSON record and get ``status: superseded`` plus
+    ``superseded_by``; guides and rejections get the same pair in front matter.
+    """
+    path = find_note(root, identifier)
+    json_path = path.with_suffix(".json")
+    if json_path.is_file():
+        record = json.loads(json_path.read_text(encoding="utf-8"))
+        record["status"] = "superseded"
+        record["superseded_by"] = superseded_by
+        json_path.write_text(
+            json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        status_line = (
+            f"> Status: superseded by `{superseded_by}`. The measurements below are "
+            "historical; do not cite them as current guidance."
+        )
+        text = path.read_text(encoding="utf-8")
+        replacement, count = re.subn(r"^> Status:.*$", status_line, text, count=1, flags=re.M)
+        path.write_text(replacement if count else status_line + "\n\n" + text, encoding="utf-8")
+    else:
+        front = parse_front_matter(path)
+        if front is None:
+            raise KnowledgeIndexError(f"{path}: note has no front matter or JSON record")
+        front["status"] = "superseded"
+        front["superseded_by"] = superseded_by
+        _rewrite_front_matter(path, front)
+    write_index(root)
+    return path
 
 
 def default_roots(repo_root: Path = REPO_ROOT) -> list[Path]:

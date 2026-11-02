@@ -110,6 +110,8 @@ For every kernel optimization task:
 | Measured negative result worth not repeating | `scripts/record_rejection.py` → `<note-root>/rejected/` |
 | A note's lifecycle state, scope, and re-validation date | YAML front matter on guides/rejections; `status`/`version`/`updated_at` in result JSON |
 | The note catalog for a backend | Generated `INDEX.md` via `scripts/knowledge_index.py` (never hand-edited) |
+| "Which notes are stale or contradict each other?" | `scripts/knowledge_audit.py` (`--strict` before a release) |
+| Retiring a superseded note | `--revalidate-of` / `--supersede` on the recorders; never delete a note |
 
 The reusable loop is defined here; task-specific prompts, harnesses, and results
 stay in the task workspace. See [docs/agent-flow.md](docs/agent-flow.md) for the

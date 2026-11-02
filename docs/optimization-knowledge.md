@@ -44,6 +44,37 @@ overwritten silently; `--update` revises one in place and increments its
 `INDEX.md` is generated from the notes by `scripts/knowledge_index.py`, never
 hand-edited. CI runs it with `--check`, so a stale catalog fails the build.
 
+## Updating, retiring, and auditing
+
+Three operations keep the library from rotting:
+
+| Goal | Command | Effect |
+|---|---|---|
+| Correct a published result | `record_knowledge.py --update ...` | Rewrites the note in place: `version` +1, `created_at` kept, `updated_at` set, every evidence gate re-run |
+| Replace a result with a re-measured one | `record_knowledge.py --revalidate-of <old-id-or-path> ...` | Publishes the new note, then marks the old one `superseded` with `superseded_by` |
+| Retire a note without a replacement | `record_knowledge.py --supersede <id-or-path> ...` (or `record_rejection.py --supersede`) | Marks the note `superseded`; it stays readable and listed |
+
+A note is never deleted: `superseded` keeps the history and the index moves it
+under `## Superseded results` (or marks the rejection line). An identifier is a
+recorded `id`, a relative path, or a bare `.md` filename; an ambiguous id is an
+error rather than a guess.
+
+`scripts/knowledge_audit.py` answers "what should I re-check":
+
+```bash
+python3 scripts/knowledge_audit.py                 # local report
+python3 scripts/knowledge_audit.py --strict        # warnings fail too
+python3 scripts/knowledge_audit.py --as-of 2026-12-01
+```
+
+It reports `ledger-changed` errors, `revalidate-overdue`, `provisional-stale`,
+`workspace-missing`, and `conflicting-confirmed` warnings, plus
+`ledger-unbound` info for records written before evidence binding existed.
+`ledger-changed` means the note's recorded sha256 no longer matches
+`runs/benchmark.csv` or `runs/candidates.jsonl`, so the note must be re-published
+with `--update` or superseded. CI runs the default mode; a local `--strict` run
+is the pre-release check.
+
 Example:
 
 ```bash

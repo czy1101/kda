@@ -22,7 +22,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from knowledge_index import KnowledgeIndexError, write_index  # noqa: E402
+from knowledge_index import (  # noqa: E402
+    KnowledgeIndexError,
+    mark_superseded,
+    write_index,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -408,6 +412,7 @@ def publish(
     knowledge_root: Path,
     *,
     update: bool = False,
+    supersede: str | None = None,
 ) -> Path:
     note_path = knowledge_root / markdown_path
     json_path = note_path.with_suffix(".json")
@@ -435,6 +440,14 @@ def publish(
         # The note itself is valid; a stale index is reported by
         # `knowledge_index.py --check` in CI, so do not lose the publication.
         print(f"record_knowledge: warning: index not regenerated: {error}", file=sys.stderr)
+    if supersede:
+        try:
+            retired = mark_superseded(knowledge_root, supersede, markdown_path)
+        except KnowledgeIndexError as error:
+            raise KnowledgeError(
+                f"note published, but `{supersede}` could not be superseded: {error}"
+            ) from error
+        print(f"superseded: {retired.relative_to(knowledge_root).as_posix()}")
     return note_path
 
 
@@ -457,6 +470,15 @@ def main(argv: list[str] | None = None) -> int:
         "--update",
         action="store_true",
         help="Revise an existing note for this candidate, incrementing its version",
+    )
+    retirement = parser.add_mutually_exclusive_group()
+    retirement.add_argument(
+        "--revalidate-of",
+        help="Note id or path that this note replaces; the old note is marked superseded",
+    )
+    retirement.add_argument(
+        "--supersede",
+        help="Note id or path to retire as superseded by this note",
     )
     parser.add_argument(
         "--knowledge-root",
@@ -484,7 +506,12 @@ def main(argv: list[str] | None = None) -> int:
             vendor_notes if vendor_notes.is_dir() else REPO_ROOT / "knowledge"
         )
         output = publish(
-            record, relative_path, markdown, root.resolve(), update=args.update
+            record,
+            relative_path,
+            markdown,
+            root.resolve(),
+            update=args.update,
+            supersede=args.supersede or args.revalidate_of,
         )
     except (KnowledgeError, OSError, yaml.YAMLError) as error:
         print(f"record_knowledge: {error}", file=sys.stderr)

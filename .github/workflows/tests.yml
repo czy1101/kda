@@ -28,3 +28,5 @@ jobs:
         run: python -m pytest tests -q
       - name: Verify the knowledge indexes are fresh
         run: python scripts/knowledge_index.py --check
+      - name: Audit the knowledge library
+        run: python scripts/knowledge_audit.py
