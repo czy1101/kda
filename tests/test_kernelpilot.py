@@ -822,6 +822,98 @@ class KernelPilotTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("TLE assessment", buffer.getvalue())
 
+    def _evidence_workspace(self, directory: str) -> Path:
+        """A workspace with every evidence file verify_evidence requires."""
+        workspace = Path(directory)
+        (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+        (workspace / "docs").mkdir(exist_ok=True)
+        for name in ("draft.md", "plan.md", "final-report.md"):
+            (workspace / "docs" / name).write_text("x\n", encoding="utf-8")
+        (workspace / "runs").mkdir(exist_ok=True)
+        for name in ("workflow-state.json", "stage-events.jsonl"):
+            (workspace / "runs" / name).write_text("{}\n", encoding="utf-8")
+        (workspace / "runs/candidates.jsonl").write_text(
+            json.dumps(
+                {
+                    "id": "baseline",
+                    "hypothesis": "baseline",
+                    "correctness": "pass",
+                    "decision": "keep",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (workspace / "runs/benchmark.csv").write_text(
+            "candidate,shape,metric_value,baseline_value,unit,status\n"
+            "baseline,s1,1.0,1.0,ms,pass\n",
+            encoding="utf-8",
+        )
+        (workspace / "runs/quality.json").write_text(
+            json.dumps({"status": "pass", "checks": {"import_paths": {"status": "pass"}}}),
+            encoding="utf-8",
+        )
+        return workspace
+
+    def test_verify_requires_generalization_evidence_when_configured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self._evidence_workspace(directory)
+            task = valid_task()
+            task["generalization"] = {"command": "true", "max_regression": 0.02}
+            errors = kernelpilot.verify_evidence(workspace, task)
+            self.assertTrue(
+                any("missing generalization evidence" in error for error in errors),
+                errors,
+            )
+
+            (workspace / "runs/generalization.json").write_text(
+                json.dumps({"exit_code": 0, "command": "true"}), encoding="utf-8"
+            )
+            errors = kernelpilot.verify_evidence(workspace, task)
+            self.assertFalse(
+                any("generalization" in error for error in errors), errors
+            )
+
+    def test_verify_rejects_stale_or_failed_generalization_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self._evidence_workspace(directory)
+            task = valid_task()
+            task["generalization"] = {"command": "python panel.py"}
+            path = workspace / "runs/generalization.json"
+
+            path.write_text(json.dumps({"exit_code": 1, "command": "python panel.py"}))
+            self.assertIn(
+                "generalization panel did not pass",
+                kernelpilot.verify_evidence(workspace, task),
+            )
+
+            path.write_text(json.dumps({"exit_code": 0, "command": "python old.py"}))
+            self.assertTrue(
+                any(
+                    "different command" in error
+                    for error in kernelpilot.verify_evidence(workspace, task)
+                )
+            )
+
+    def test_run_generalization_records_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            task = valid_task()
+            task["generalization"] = {"command": "python panel.py", "max_regression": 0.02}
+            completed = subprocess.CompletedProcess([], 0, "guard ok\n", "")
+            with patch.object(
+                kernelpilot, "run_contract_command", return_value=completed
+            ) as runner:
+                record = kernelpilot.run_generalization(workspace, task)
+            self.assertTrue(record["passed"])
+            self.assertEqual(record["max_regression"], 0.02)
+            stored = json.loads(
+                (workspace / "runs/generalization.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(stored["exit_code"], 0)
+            self.assertIn("KDA_GENERALIZATION_MAX_REGRESSION=0.02",
+                          runner.call_args.args[1]["generalization"]["command"])
+
     def test_structured_result_requires_stop_reason_and_workflow_issues(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "result.json"

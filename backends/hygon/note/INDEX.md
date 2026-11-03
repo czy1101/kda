@@ -14,6 +14,7 @@ work so the same experiment is not repeated.
 
 - [Validated Hygon gfx936 reference](gfx936-validation.md) — Validated architecture, ISA, and calibration anchors for the BW/gfx936 DTK image. Scope: `BW/gfx936`, validated 2026-10-19, revalidate after 2027-01-31.
 - [HY3 prefill GQA and split-KV reference](hy3-prefill-gqa-split-kv.md) — Portable GQA K/V reuse and split-KV patterns plus the dispatch policy that gates them. Scope: `BW/gfx936`, revalidate after 2027-01-31, **provisional**.
+- [HY3 prefill PV layout, accumulation, and loading notes](hy3-prefill-pv-layout-and-accumulation.md) — Evidence and transfer limits for PV orientation, segmented PV, accumulator reuse, and V loading. Scope: `BW/gfx936`, validated 2026-10-29, revalidate after 2027-01-31, **provisional**.
 - [Choosing the next Hygon experiment](METHODS.md) — Route a measured Hygon bottleneck to the experiment that tests it, and to the evidence that decides it. Scope: `BW/gfx936`, revalidate after 2027-01-31.
 - [Hygon gfx936 MMAC/FMA path selection and multi-row fusion](mmac-fma-path-selection.md) — Choose MMAC or vector FMA from effective tile occupancy, and fuse rows only when reuse pays. Scope: `BW/gfx936`, revalidate after 2027-01-31, **provisional**.
 - [Porting an operator to BW/gfx936](OPERATOR-PORTING.md) — Port a new operator to Hygon BW/gfx936 in Triton and get it through the KDA evidence gates. Scope: `BW/gfx936`, revalidate after 2027-01-31, **provisional**.
@@ -24,4 +25,9 @@ work so the same experiment is not repeated.
 
 ## Rejected approaches
 
+- [GDN2 H-kernel global num_warps=16 autotune expansion](rejected/gdn2-h-kernel-global-num-warps-16-autotune-expansion.md) — `GDN2`; `BW/gfx936`; Retry only with a principled low-cardinality workload-class dispatch (not global autotuning) and paired validation showing long low-grid K=V=128 gain while every other shape stays within 2% regression.
+- [GDN2 H-kernel num_warps=16 with sequence-length autotune key](rejected/gdn2-h-kernel-num-warps-16-with-sequence-length-autotune-key.md) — `GDN2`; `BW/gfx936`; Retry only if reliable profiling shows a distinct long-sequence H-kernel bottleneck and a non-overfit workload-class dispatch passes multiple shapes with no >2% regressions.
+- [GDN2 HIP GROUP_SIZE=32 for long low-grid K128](rejected/gdn2-hip-group-size-32-for-long-low-grid-k128.md) — `GDN2`; `BW/gfx936`; Retry only if a revised block mapping preserves CTA count while increasing K-side reuse, then validate on the same long low-grid K128 panel.
+- [GDN2 Hygon Triton Akk generic layout](rejected/gdn2-hygon-triton-akk-generic-layout.md) — `GDN2`; `BW/gfx936`; Retry after a profile demonstrates Akk layout conversion or access as a dominant cost, then use paired repeated same-shape measurements.
+- [GDN2 Hygon Triton BV=16 tuning trial](rejected/gdn2-hygon-triton-bv-16-tuning-trial.md) — `GDN2`; `BW/gfx936`; Retry only if a valid PMC/resource profile demonstrates VGPR-limited occupancy for a target shape and a paired repeat shows >2% improvement without regressions.
 - [GLA intra-tile A@V fusion is slower at K=V=128](rejected/gla-intra-tile-a-v-fusion-is-slower-at-k-v-128.md) — `flag_attn.runtime.backend._hygon.FLA.gla.chunk_gla`; `BW/gfx936`; retry when A tile schedule covering K=V=128 fits the 64 KiB LDS budget together with the measured VGPR/SGPR use, or the compiler stops decomposing the wide tile.

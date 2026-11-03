@@ -32,6 +32,11 @@ source paths, and rejects relative Python imports such as
 which is distinct from a server filesystem path. A required quality gate must
 pass before a candidate may be benchmarked or promoted.
 
+When the contract configures `generalization.command`, run
+`scripts/kernelpilot.py run generalization` after the benchmark and treat a
+non-zero exit as a rejected candidate; final verification requires the recorded
+`runs/generalization.json`.
+
 When `execution.transport` is `ssh`, Codex remains on the controller. Never
 invoke `ssh`, `scp`, or `rsync` directly. Use `kernelpilot.py remote pull` to
 materialize allow-listed files under `remote-worktree/`, edit that mirror, and
@@ -104,6 +109,7 @@ promotion, and retain the per-shape measurements in `runs/benchmark.csv`.
 | `runs/benchmark.csv` | Per-shape measurements with columns `candidate,shape,metric_value,baseline_value,unit,status`. `checkpoint save-best` recomputes promotion from these values and refuses a candidate without recorded, passing rows. |
 | `runs/analysis-capabilities.json` | Backend-declared tools probed in this exact environment, with availability, versions, and default selection. |
 | `runs/quality.json` | Results of the configured public API, module-layer, absolute-import, naming/registry, pytest-marker, and unified-dispatch gates. |
+| `runs/generalization.json` | Exit code, command, and output of the configured guard-shape panel. |
 | `profile/` | Profiler output or report summaries. |
 
 A future reader must be able to reconstruct what changed, what was measured, and

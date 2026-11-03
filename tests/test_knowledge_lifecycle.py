@@ -299,6 +299,39 @@ def test_audit_flags_conflicting_confirmed_results(tmp_path):
     assert "conflicting-confirmed" in _codes(findings)
 
 
+def test_note_cannot_supersede_itself(tmp_path):
+    path = _result(tmp_path, "op/c001-demo.md")
+    with pytest.raises(knowledge_index.KnowledgeIndexError, match="cannot supersede itself"):
+        knowledge_index.mark_superseded(tmp_path, "c001", path.name)
+
+
+def test_note_identifier_cannot_escape_the_root(tmp_path):
+    with pytest.raises(knowledge_index.KnowledgeIndexError, match="inside the knowledge root"):
+        knowledge_index.find_note(tmp_path, "../outside.md")
+
+
+def test_audit_skips_retired_notes(tmp_path):
+    _result(
+        tmp_path,
+        "op/c001-demo.md",
+        status="superseded",
+        extra={
+            "task_workspace": (tmp_path / "gone").as_posix(),
+            "evidence_ledger": {"candidates_sha256": "0" * 64, "benchmark_sha256": "0" * 64},
+        },
+    )
+    assert knowledge_audit.audit(tmp_path) == []
+
+
+def test_audit_groups_conflicts_by_note_family(tmp_path):
+    _result(tmp_path, "gla/c001-a.md", note_id="c001", operator="pkg.gla.chunk_gla")
+    _result(tmp_path, "gla/c002-b.md", note_id="c002", operator="pkg.gla.fused_gla")
+    findings = knowledge_audit.audit(tmp_path)
+    assert "conflicting-confirmed" in _codes(findings)
+    conflict = next(item for item in findings if item.code == "conflicting-confirmed")
+    assert "note family `gla`" in conflict.message
+
+
 def test_audit_reports_an_unknown_workspace(tmp_path):
     _result(
         tmp_path,

@@ -9,6 +9,7 @@ This repository documents an early research prototype and remains under active d
 | Path | Purpose |
 |---|---|
 | `docs/agent-flow.md` | Minimal end-to-end KDA workflow. |
+| `docs/benchmark-writing-guide.md` | How to write a benchmark harness the runner can verify. |
 | `AGENTS.md` | Repository-facing agent instructions for Codex. |
 | `CLAUDE.md` | Repository-facing agent instructions for Claude Code. |
 | `prompts/README.md` | How to use prompt templates. |
@@ -135,6 +136,7 @@ python3 <kda>/scripts/kernelpilot.py validate --workspace <operator-repo>
 # Run a contracted command with the exact environment setup.
 python3 <kda>/scripts/kernelpilot.py run correctness --workspace <operator-repo>
 python3 <kda>/scripts/kernelpilot.py run quality     --workspace <operator-repo>
+python3 <kda>/scripts/kernelpilot.py run generalization --workspace <operator-repo>
 
 # Discover backend tools and inspect the selected analysis route.
 python3 <kda>/scripts/kernelpilot.py discover-tools --workspace <operator-repo>

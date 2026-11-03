@@ -32,7 +32,8 @@ The command refuses to publish a note unless all of the following hold:
 Published notes go under `backends/<vendor>/note/<operator>/` when that vendor
 note directory exists; otherwise they go under
 `knowledge/<backend>-<device>-<arch>/<operator>/`. `--note-dir` overrides the
-operator directory so a note can join an existing family (for example `gla`).
+operator directory so a note can join an existing family (for example `gla`);
+without it the directory is the full operator slug, which is unique but long.
 Each consists of a readable Markdown report and a JSON sidecar validated by
 `schemas/optimization-knowledge.schema.json` before anything is written. The
 JSON also records `task_workspace` and the sha256 of `runs/candidates.jsonl`

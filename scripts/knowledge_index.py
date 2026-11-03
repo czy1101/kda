@@ -174,7 +174,9 @@ def _rejection_line(entry: dict[str, Any]) -> str:
     if entry["operator"]:
         detail.insert(0, f"`{entry['operator']}`")
     if entry["retry_when"]:
-        detail.append(f"retry when {entry['retry_when'].rstrip('.')}")
+        retry = entry["retry_when"].rstrip(".")
+        # Authors often start the field with "Retry ..."; do not repeat it.
+        detail.append(retry if retry.lower().startswith("retry") else f"retry when {retry}")
     if entry["status"] != "rejected":
         detail.append(f"**{entry['status']}**")
     return f"- [{entry['title']}]({entry['path']}) — {'; '.join(detail)}."
@@ -254,6 +256,10 @@ def write_index(root: Path) -> tuple[Path, bool]:
 def find_note(root: Path, identifier: str) -> Path:
     """Resolve a note by recorded id, relative path, or bare filename."""
     requested = PurePosixPath(identifier)
+    if requested.is_absolute() or ".." in requested.parts:
+        raise KnowledgeIndexError(
+            f"note identifier must stay inside the knowledge root: {identifier}"
+        )
     if requested.suffix == ".md":
         direct = root / identifier
         if direct.is_file():
@@ -318,6 +324,17 @@ def mark_superseded(
     ``superseded_by``; guides and rejections get the same pair in front matter.
     """
     path = find_note(root, identifier)
+    replacement = root / superseded_by
+    if not replacement.exists():
+        try:
+            replacement = find_note(root, superseded_by)
+        except KnowledgeIndexError:
+            replacement = root / superseded_by
+    if replacement.resolve() == path.resolve():
+        raise KnowledgeIndexError(
+            f"a note cannot supersede itself: {superseded_by}; "
+            "publishing a replacement should name the new note"
+        )
     json_path = path.with_suffix(".json")
     if json_path.is_file():
         record = json.loads(json_path.read_text(encoding="utf-8"))

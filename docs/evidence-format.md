@@ -49,6 +49,31 @@ The five project-specific commands remain repository-specific. The absolute
 import gate is mandatory for every task; when the optional quality contract is
 required, all six checks must pass before final evidence can be verified.
 
+## Generalization evidence
+
+When the contract configures `generalization.command`, run it through
+`kernelpilot run generalization`. The runner executes it in the contracted
+environment, exports `generalization.max_regression` as
+`KDA_GENERALIZATION_MAX_REGRESSION`, and writes `runs/generalization.json`:
+
+```json
+{
+  "version": 1,
+  "command": "python bench/guard_panel.py",
+  "max_regression": 0.02,
+  "started_at": "2026-11-03T02:10:00+00:00",
+  "finished_at": "2026-11-03T02:12:31+00:00",
+  "exit_code": 0,
+  "passed": true,
+  "stdout_tail": "...",
+  "stderr_tail": ""
+}
+```
+
+Final verification fails when the evidence is missing, when `exit_code` is not
+zero, or when it was recorded for a different command. The panel owns the
+tolerance decision; a non-zero exit is the contract's "guard shape regressed".
+
 ## Candidate ledger
 
 `runs/candidates.jsonl` contains one object per attempt and follows

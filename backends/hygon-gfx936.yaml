@@ -15,54 +15,72 @@ skills:
     - skills/hygon-profile
 
 analysis_tools:
+  # Probes search the DTK layout instead of assuming one image-specific root:
+  # a bare-metal host and a container often install the same toolkit under
+  # /opt/dtk, /opt/dtk-<version>, or a pinned snapshot directory.
   - id: rocprofv2
     kind: kernel-profiler
     priority: 100
     probe: >-
-      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/rocprofiler/bin/rocprofv2"
+      for root in "${KDA_DTK_ROOT:-/opt/dtk}" /opt/dtk /opt/dtk-26.04
+      /opt/dtk-26.04-DCC2602-0317; do [ -x "$root/rocprofiler/bin/rocprofv2" ] && exit 0; done;
+      exit 1
     capabilities: [kernel_trace, counters, structured_export, reference_comparison]
     skills: [skills/hygon-profile]
   - id: rocprof
     kind: kernel-profiler
     priority: 90
     probe: >-
-      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/rocprofiler/bin/rocprof"
+      for root in "${KDA_DTK_ROOT:-/opt/dtk}" /opt/dtk /opt/dtk-26.04
+      /opt/dtk-26.04-DCC2602-0317; do [ -x "$root/rocprofiler/bin/rocprof" ] && exit 0; done;
+      exit 1
     capabilities: [kernel_trace, counters, structured_export, reference_comparison]
     skills: [skills/hygon-profile]
   - id: hipprof
     kind: timeline-profiler
     priority: 80
     probe: >-
-      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/hip/bin/hipprof"
+      for root in "${KDA_DTK_ROOT:-/opt/dtk}" /opt/dtk /opt/dtk-26.04
+      /opt/dtk-26.04-DCC2602-0317; do [ -x "$root/hip/bin/hipprof" ] && exit 0; done;
+      exit 1
     version_command: >-
-      "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/hip/bin/hipprof" -h
+      for root in "${KDA_DTK_ROOT:-/opt/dtk}" /opt/dtk /opt/dtk-26.04
+      /opt/dtk-26.04-DCC2602-0317; do [ -x "$root/hip/bin/hipprof" ] && { "$root/hip/bin/hipprof" -h; exit $?; }; done; exit 1
     capabilities: [timeline, structured_export, reference_comparison]
     skills: [skills/hygon-profile]
   - id: rocsys
     kind: profiler-controller
     priority: 70
     probe: >-
-      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/rocprofiler/bin/rocsys"
+      for root in "${KDA_DTK_ROOT:-/opt/dtk}" /opt/dtk /opt/dtk-26.04
+      /opt/dtk-26.04-DCC2602-0317; do [ -x "$root/rocprofiler/bin/rocsys" ] && exit 0; done;
+      exit 1
     capabilities: [session_control, selective_capture]
     skills: [skills/hygon-profile]
   - id: rocminfo
     kind: device-inspector
     priority: 50
     probe: >-
-      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/hip/bin/rocminfo"
+      for root in "${KDA_DTK_ROOT:-/opt/dtk}" /opt/dtk /opt/dtk-26.04
+      /opt/dtk-26.04-DCC2602-0317; do [ -x "$root/hip/bin/rocminfo" ] && exit 0; done;
+      exit 1
     capabilities: [device_architecture, runtime_agents]
     skills: [skills/hygon-profile]
   - id: rocm-smi
     kind: device-inspector
     priority: 40
     probe: >-
-      test -x "${KDA_DTK_ROOT:-/opt/dtk-26.04-DCC2602-0317}/bin/rocm-smi"
+      for root in "${KDA_DTK_ROOT:-/opt/dtk}" /opt/dtk /opt/dtk-26.04
+      /opt/dtk-26.04-DCC2602-0317; do [ -x "$root/bin/rocm-smi" ] && exit 0; done;
+      exit 1
     capabilities: [device_state, clocks, memory, utilization]
     skills: [skills/hygon-profile]
   - id: hy-smi
     kind: device-inspector
     priority: 40
-    probe: command -v hy-smi >/dev/null 2>&1
+    probe: >-
+      for path in /opt/hyhal/bin/hy-smi /opt/dtk/bin/hy-smi /opt/dtk-26.04/bin/hy-smi;
+      do [ -x "$path" ] && exit 0; done; command -v hy-smi >/dev/null 2>&1
     capabilities: [device_state, clocks, memory, utilization]
     skills: [skills/hygon-profile]
 

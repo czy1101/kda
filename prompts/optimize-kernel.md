@@ -46,7 +46,8 @@ and recovery in `runs/stage-events.jsonl` and the final report.
 5. Run correctness and `kernelpilot.py run quality` after every candidate.
    Benchmark only candidates that pass correctness, the mandatory import audit,
    and all required configured gates across the full required shape set; then
-   run configured generalization checks.
+   run `kernelpilot.py run generalization` when the contract configures it, and
+   treat a non-zero exit as a rejection.
 6. Record every kept, revised, rejected, failed, or regressed candidate with a
    reason and rollback result. Save the checkpoint for a correct improved
    candidate, then evaluate the configured goal from raw benchmark records.

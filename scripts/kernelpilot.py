@@ -45,6 +45,7 @@ ANALYSIS_CAPABILITIES = Path("runs/analysis-capabilities.json")
 ANALYSIS_STRATEGY = Path("runs/analysis-strategy.json")
 TLE_ASSESSMENT = Path("runs/tle-assessment.json")
 QUALITY_EVIDENCE = Path("runs/quality.json")
+GENERALIZATION_EVIDENCE = Path("runs/generalization.json")
 CHECKPOINT_ROOT = Path(".kernelpilot/checkpoints")
 REQUIRED_TOP_LEVEL = (
     "version",
@@ -1211,6 +1212,45 @@ def run_contract_command(
     )
 
 
+def run_generalization(workspace: Path, task: dict[str, Any]) -> dict[str, Any]:
+    """Run the contracted generalization panel and record checkable evidence.
+
+    The panel's exit code is the gate: zero means the held-out or guard shapes
+    stayed within tolerance. ``generalization.max_regression`` is exported to the
+    command as ``KDA_GENERALIZATION_MAX_REGRESSION`` so the harness can apply the
+    same number the contract declares, and it is recorded with the evidence.
+    """
+    config = _mapping(task.get("generalization"))
+    command = config.get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise ContractError("task has no generalization.command")
+    max_regression = config.get("max_regression")
+    wrapped = command
+    if isinstance(max_regression, (int, float)) and not isinstance(max_regression, bool):
+        wrapped = f"export KDA_GENERALIZATION_MAX_REGRESSION={max_regression}\n{command}"
+    started = _utc_now()
+    run_task = {**task, "generalization": {**config, "command": wrapped}}
+    completed = run_contract_command(
+        workspace, run_task, "generalization", capture=True
+    )
+    finished = _utc_now()
+    record = {
+        "version": 1,
+        "command": command,
+        "max_regression": max_regression,
+        "started_at": started,
+        "finished_at": finished,
+        "exit_code": completed.returncode,
+        "passed": completed.returncode == 0,
+        "stdout_tail": (completed.stdout or "")[-4000:],
+        "stderr_tail": (completed.stderr or "")[-4000:],
+    }
+    output = workspace / GENERALIZATION_EVIDENCE
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    return record
+
+
 def run_preflight(workspace: Path, task: dict[str, Any]) -> None:
     environment = task.get("environment") or {}
     preflight = environment.get("preflight")
@@ -1710,6 +1750,27 @@ def verify_evidence(
                     )
                     if quality_result.get("status") != "pass" or not checks_pass:
                         errors.append("required quality gates did not pass")
+        generalization = _mapping(task.get("generalization"))
+        generalization_command = generalization.get("command")
+        if isinstance(generalization_command, str) and generalization_command.strip():
+            evidence_path = workspace / GENERALIZATION_EVIDENCE
+            if not evidence_path.is_file() or evidence_path.stat().st_size == 0:
+                errors.append(
+                    "missing generalization evidence: runs/generalization.json "
+                    "(run `kernelpilot run generalization`)"
+                )
+            else:
+                try:
+                    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as error:
+                    errors.append(f"invalid generalization evidence: {error}")
+                else:
+                    if not isinstance(evidence, dict) or evidence.get("exit_code") != 0:
+                        errors.append("generalization panel did not pass")
+                    elif evidence.get("command") != generalization_command:
+                        errors.append(
+                            "generalization evidence belongs to a different command; rerun it"
+                        )
         if _tle_policy(task) != "disabled":
             try:
                 assessment = load_tle_assessment(workspace, task)
@@ -2051,7 +2112,8 @@ def main(argv: list[str] | None = None) -> int:
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument(
-        "section", choices=("quality", "correctness", "baseline", "benchmark", "profile")
+        "section",
+        choices=("quality", "correctness", "baseline", "benchmark", "profile", "generalization"),
     )
     run_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     run_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
@@ -2201,6 +2263,10 @@ def main(argv: list[str] | None = None) -> int:
                 result = run_quality_checks(args.workspace, task, ssh_bin=args.ssh_bin)
                 print(json.dumps(result, indent=2))
                 return 0 if result["status"] in ("pass", "skipped") or not result["required"] else 1
+            if args.section == "generalization":
+                result = run_generalization(args.workspace, task)
+                print(json.dumps(result, indent=2))
+                return 0 if result["passed"] else 1
             result = run_contract_command(
                 args.workspace,
                 task,

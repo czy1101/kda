@@ -290,7 +290,12 @@ properties:
   generalization:
     type: object
     additionalProperties: false
-    description: Optional guard against benchmark-specific specialization.
+    description: >
+      Optional guard against benchmark-specific specialization. When `command`
+      is configured, `kernelpilot run generalization` executes it and writes
+      `runs/generalization.json`; a non-zero exit fails final verification.
+      `max_regression` is exported to the command as
+      KDA_GENERALIZATION_MAX_REGRESSION so the harness applies the same limit.
     properties:
       allow_shape_specialization:
         type: boolean
@@ -300,7 +305,9 @@ properties:
           true it needs an algorithmic justification rather than exact benchmark values.
       command:
         type: string
-        description: Optional correctness/performance command covering generalization cases.
+        description: >
+          Correctness/performance command covering held-out or guard shapes. It
+          must exit non-zero when a guard shape regresses or fails.
       guard_shapes:
         type: array
         items: {type: string}
@@ -488,6 +495,11 @@ properties:
   stop:
     type: object
     additionalProperties: false
+    description: >
+      Stop policy. Only `max_candidates` is machine-enforced: KernelPilot counts
+      implemented candidates and rejects a final result that exceeds it. The
+      other limits are executed by the agent per AGENTS.md and the workflow, and
+      are recorded in the final report rather than checked by the runner.
     properties:
       max_candidates:
         type: integer

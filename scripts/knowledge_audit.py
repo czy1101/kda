@@ -98,11 +98,18 @@ def _audit_results(
             continue
         relative = _relative(json_path.with_suffix(".md"), root)
         status = record.get("status", "confirmed")
+        if status == "superseded":
+            # Historical record: keep it listed and readable, but its ledgers
+            # are expected to move on after retirement, so do not re-verify them.
+            continue
         if status == "confirmed":
+            # Group by note family directory (for example ``gla/``) so two
+            # entrypoints of the same operator family are still compared.
+            family = relative.split("/", 1)[0] if "/" in relative else relative
             key = (
                 str(record.get("backend", "")),
                 str(record.get("device", "")),
-                str(record.get("operator", "")),
+                family,
             )
             by_operator.setdefault(key, []).append(relative)
 
@@ -222,14 +229,14 @@ def audit(
         raise KnowledgeIndexError(f"knowledge root does not exist: {root}")
     result_findings, by_operator = _audit_results(root, when, provisional_days)
     findings = result_findings + _audit_guides(root, when, provisional_days)
-    for (backend, device, operator), notes in sorted(by_operator.items()):
+    for (backend, device, family), notes in sorted(by_operator.items()):
         if len(notes) > 1:
             findings.append(
                 Finding(
                     "warning",
                     "conflicting-confirmed",
                     ", ".join(notes),
-                    f"{len(notes)} confirmed results for `{operator}` on "
+                    f"{len(notes)} confirmed results in note family `{family}` on "
                     f"{backend}/{device}; supersede the older one or record why both hold",
                 )
             )
