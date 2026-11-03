@@ -914,6 +914,109 @@ class KernelPilotTests(unittest.TestCase):
             self.assertIn("KDA_GENERALIZATION_MAX_REGRESSION=0.02",
                           runner.call_args.args[1]["generalization"]["command"])
 
+    def test_profile_runs_are_recorded_and_budget_enforced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+            task = valid_task()
+            task["stop"] = {"max_profile_runs": 1}
+            completed = subprocess.CompletedProcess([], 0, "", "")
+            kernelpilot._record_profile_run(
+                workspace, tool="rocprofv2", variant="candidate", completed=completed
+            )
+            report = kernelpilot.evaluate_stop_limits(workspace, task)
+            self.assertEqual(report["profile_runs"], 1)
+            self.assertEqual(report["violations"], [])
+
+            kernelpilot._record_profile_run(
+                workspace, tool="rocprofv2", variant="reference", completed=completed
+            )
+            report = kernelpilot.evaluate_stop_limits(workspace, task)
+            self.assertEqual(report["profile_runs"], 2)
+            self.assertTrue(
+                any("profile budget exceeded" in item for item in report["violations"])
+            )
+            self.assertTrue(
+                any(
+                    "profile budget exceeded" in error
+                    for error in kernelpilot.verify_evidence(workspace, task)
+                )
+            )
+
+    def test_run_contract_command_logs_profile_captures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            task = valid_task()
+            task["profile"] = {"command": "true"}
+            completed = subprocess.CompletedProcess([], 0, "", "")
+            with patch.object(
+                kernelpilot, "run_explicit_command", return_value=completed
+            ):
+                kernelpilot.run_contract_command(
+                    workspace, task, "profile", tool="rocprofv2"
+                )
+            runs = kernelpilot.load_profile_runs(workspace)
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0]["tool"], "rocprofv2")
+            self.assertEqual(runs[0]["variant"], "candidate")
+
+    def test_stop_report_counts_consecutive_non_improvement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+            (workspace / "runs").mkdir()
+            rows = {"baseline": 1.0, "c1": 0.8, "c2": 0.9, "c3": 1.1}
+            (workspace / "runs/candidates.jsonl").write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "id": candidate,
+                            "hypothesis": "h",
+                            "correctness": "pass",
+                            "decision": "keep",
+                        }
+                    )
+                    for candidate in rows
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with (workspace / "runs/benchmark.csv").open(
+                "w", encoding="utf-8", newline=""
+            ) as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "candidate",
+                        "shape",
+                        "metric_value",
+                        "baseline_value",
+                        "unit",
+                        "status",
+                    ],
+                )
+                writer.writeheader()
+                for candidate, value in rows.items():
+                    writer.writerow(
+                        {
+                            "candidate": candidate,
+                            "shape": "s1",
+                            "metric_value": value,
+                            "baseline_value": 1.0,
+                            "unit": "ms",
+                            "status": "pass",
+                        }
+                    )
+            task = valid_task()
+            task["stop"] = {"no_improvement_rounds": 2}
+            report = kernelpilot.evaluate_stop_limits(workspace, task)
+            self.assertEqual(report["candidates"], 3)
+            self.assertEqual(report["consecutive_no_improvement"], 2)
+            self.assertEqual(report["violations"], [])
+            self.assertTrue(
+                any("re-diagnosis after 2" in item for item in report["warnings"])
+            )
+
     def test_structured_result_requires_stop_reason_and_workflow_issues(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "result.json"

@@ -74,6 +74,25 @@ Final verification fails when the evidence is missing, when `exit_code` is not
 zero, or when it was recorded for a different command. The panel owns the
 tolerance decision; a non-zero exit is the contract's "guard shape regressed".
 
+## Profile budget ledger
+
+Every capture started through `kernelpilot run profile` appends one line to
+`runs/profile-runs.jsonl`:
+
+```json
+{"version": 1, "finished_at": "…", "tool": "rocprofv2", "variant": "candidate", "exit_code": 0}
+```
+
+`verify` compares the line count with `stop.max_profile_runs` and fails the run
+when the budget is exceeded. The ledger is a best-effort budget rather than an
+audit trail: a capture invoked by hand outside the wrapper is not counted.
+
+`stop.no_improvement_rounds` is computed from the candidate and benchmark
+ledgers at verification time — the trailing number of candidates that did not
+beat the best aggregate ratio. It produces a printed warning and a
+`stop_report` block in `runs/kernelpilot-state.json`; it does not fail the run,
+because only the agent can act on it by re-diagnosing.
+
 ## Candidate ledger
 
 `runs/candidates.jsonl` contains one object per attempt and follows

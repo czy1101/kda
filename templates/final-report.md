@@ -9,6 +9,13 @@
 - Deployed or restored revision:
 - Best-checkpoint restore result:
 
+## Stop-budget report
+
+- Candidates attempted vs `stop.max_candidates`:
+- Profiling captures vs `stop.max_profile_runs`:
+- Consecutive candidates without a new best vs `stop.no_improvement_rounds`:
+- Action taken when a budget or streak was reached:
+
 ## Performance
 
 - Comparator:

@@ -62,7 +62,10 @@ This repository defines a reusable workflow for GPU kernel optimization.
 19. For Hygon performance analysis, require a usable profiler capture before
     making bottleneck claims or promoting a candidate. Prefer rocprofv2 kernel
     traces; use rocprof only after its task-local capture smoke test succeeds.
-    Record device-state and architecture probes as supporting context.
+    Record device-state and architecture probes as supporting context. Stay
+    within `stop.max_profile_runs`: every capture started through
+    `kernelpilot run profile` is counted in `runs/profile-runs.jsonl`, and
+    exceeding the budget fails final verification.
 
 ## Optimization loop
 

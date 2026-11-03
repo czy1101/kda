@@ -496,10 +496,13 @@ properties:
     type: object
     additionalProperties: false
     description: >
-      Stop policy. Only `max_candidates` is machine-enforced: KernelPilot counts
-      implemented candidates and rejects a final result that exceeds it. The
-      other limits are executed by the agent per AGENTS.md and the workflow, and
-      are recorded in the final report rather than checked by the runner.
+      Stop policy. `max_candidates` and `max_profile_runs` are machine-enforced:
+      KernelPilot counts attempted candidates and recorded profiling captures and
+      fails final verification when either budget is exceeded.
+      `no_improvement_rounds` is reported, not enforced: the runner computes the
+      trailing streak without a new best and writes it to
+      runs/kernelpilot-state.json and the verify output, because only the agent
+      can act on it by re-diagnosing.
     properties:
       max_candidates:
         type: integer

@@ -110,6 +110,7 @@ promotion, and retain the per-shape measurements in `runs/benchmark.csv`.
 | `runs/analysis-capabilities.json` | Backend-declared tools probed in this exact environment, with availability, versions, and default selection. |
 | `runs/quality.json` | Results of the configured public API, module-layer, absolute-import, naming/registry, pytest-marker, and unified-dispatch gates. |
 | `runs/generalization.json` | Exit code, command, and output of the configured guard-shape panel. |
+| `runs/profile-runs.jsonl` | One line per contracted profiling capture; `stop.max_profile_runs` is enforced from it. |
 | `profile/` | Profiler output or report summaries. |
 
 A future reader must be able to reconstruct what changed, what was measured, and

@@ -46,6 +46,7 @@ ANALYSIS_STRATEGY = Path("runs/analysis-strategy.json")
 TLE_ASSESSMENT = Path("runs/tle-assessment.json")
 QUALITY_EVIDENCE = Path("runs/quality.json")
 GENERALIZATION_EVIDENCE = Path("runs/generalization.json")
+PROFILE_RUNS = Path("runs/profile-runs.jsonl")
 CHECKPOINT_ROOT = Path(".kernelpilot/checkpoints")
 REQUIRED_TOP_LEVEL = (
     "version",
@@ -1204,12 +1205,15 @@ def run_contract_command(
         config = task.get(section)
         if not isinstance(config, dict) or not config.get("command"):
             raise ContractError(f"task has no {section}.command")
-    return run_explicit_command(
+    completed = run_explicit_command(
         workspace,
         task,
         config["command"],
         capture=capture,
     )
+    if section == "profile":
+        _record_profile_run(workspace, tool=tool, variant=variant, completed=completed)
+    return completed
 
 
 def run_generalization(workspace: Path, task: dict[str, Any]) -> dict[str, Any]:
@@ -1702,6 +1706,124 @@ def evaluate_goal(
     }, errors
 
 
+def _record_profile_run(
+    workspace: Path,
+    *,
+    tool: str | None,
+    variant: str,
+    completed: subprocess.CompletedProcess[str],
+) -> None:
+    """Append one profiling capture to the budget ledger.
+
+    Counting happens in the wrapper because profiling is expensive and the
+    contract budgets it. A capture made by hand outside `kernelpilot run
+    profile` cannot be counted; this ledger is a best-effort budget, not an
+    audit trail.
+    """
+    record = {
+        "version": 1,
+        "finished_at": _utc_now(),
+        "tool": tool,
+        "variant": variant,
+        "exit_code": completed.returncode,
+    }
+    path = workspace / PROFILE_RUNS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
+def load_profile_runs(workspace: Path) -> list[dict[str, Any]]:
+    path = workspace / PROFILE_RUNS
+    if not path.is_file():
+        return []
+    runs: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                runs.append(record)
+    return runs
+
+
+def evaluate_stop_limits(workspace: Path, task: dict[str, Any]) -> dict[str, Any]:
+    """Report the contracted budgets, and the violations that must fail a run.
+
+    ``max_candidates`` and ``max_profile_runs`` are hard budgets: exceeding them
+    invalidates the run. ``no_improvement_rounds`` is a diagnostic, not a hard
+    stop — the runner cannot force a different experiment, so it reports the
+    streak and leaves the decision to the report reader.
+    """
+    stop = _mapping(task.get("stop"))
+    direction = _mapping(task.get("goal")).get("direction", "minimize")
+    records, _ = _load_candidate_records(workspace)
+    attempted = [record for record in records if record.get("id") != "baseline"]
+    profile_runs = load_profile_runs(workspace)
+
+    best = 1.0
+    streak = 0
+    for record in attempted:
+        candidate = record.get("id")
+        try:
+            evaluation, errors = evaluate_goal(workspace, task, str(candidate))
+        except (KeyError, ContractError):
+            evaluation, errors = None, ["unusable goal"]
+        if evaluation is None or errors:
+            # An unmeasurable round did not beat the best either.
+            streak += 1
+            continue
+        ratio = evaluation["aggregate_ratio"]
+        improved = (
+            ratio < best - 1e-9 if direction == "minimize" else ratio > best + 1e-9
+        )
+        if improved:
+            best = ratio
+            streak = 0
+        else:
+            streak += 1
+
+    report: dict[str, Any] = {
+        "version": 1,
+        "generated_at": _utc_now(),
+        "candidates": len(attempted),
+        "max_candidates": stop.get("max_candidates"),
+        "profile_runs": len(profile_runs),
+        "max_profile_runs": stop.get("max_profile_runs"),
+        "consecutive_no_improvement": streak,
+        "no_improvement_rounds": stop.get("no_improvement_rounds"),
+        "best_aggregate_ratio": best,
+        "violations": [],
+        "warnings": [],
+    }
+    maximum = report["max_candidates"]
+    if isinstance(maximum, int) and not isinstance(maximum, bool):
+        if report["candidates"] > maximum:
+            report["violations"].append(
+                f"candidate budget exceeded: {report['candidates']} attempted, "
+                f"maximum {maximum}"
+            )
+    profile_limit = report["max_profile_runs"]
+    if isinstance(profile_limit, int) and not isinstance(profile_limit, bool):
+        if report["profile_runs"] > profile_limit:
+            report["violations"].append(
+                f"profile budget exceeded: {report['profile_runs']} captures, "
+                f"maximum {profile_limit}"
+            )
+    improvement_limit = report["no_improvement_rounds"]
+    if isinstance(improvement_limit, int) and not isinstance(improvement_limit, bool):
+        if streak >= improvement_limit:
+            report["warnings"].append(
+                f"{streak} consecutive candidates did not beat the best; the "
+                f"contract asks for re-diagnosis after {improvement_limit}"
+            )
+    return report
+
+
 def verify_evidence(
     workspace: Path,
     task: dict[str, Any] | None = None,
@@ -1801,12 +1923,7 @@ def verify_evidence(
     candidate_ids = [record.get("id") for record in candidate_records if record.get("id")]
     errors.extend(candidate_errors)
     if task is not None:
-        maximum = task.get("stop", {}).get("max_candidates")
-        attempted = [candidate for candidate in candidate_ids if candidate != "baseline"]
-        if maximum is not None and len(attempted) > maximum:
-            errors.append(
-                f"candidate budget exceeded: {len(attempted)} attempted, maximum {maximum}"
-            )
+        errors.extend(evaluate_stop_limits(workspace, task)["violations"])
 
     benchmark_path = workspace / "runs/benchmark.csv"
     if benchmark_path.is_file():
@@ -2048,9 +2165,12 @@ def run_codex(
             "forbidden_changes": forbidden_changes,
             "restoration": restoration,
             "result": final_result,
+            "stop_report": evaluate_stop_limits(workspace, task),
         }
     )
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    for warning in state["stop_report"]["warnings"]:
+        print(f"KernelPilot warning: {warning}", file=sys.stderr)
     if forbidden_changes:
         print(
             "KernelPilot rejected the run because forbidden paths changed:\n- "
@@ -2178,6 +2298,8 @@ def main(argv: list[str] | None = None) -> int:
             if final_path is not None:
                 final_result, final_errors = load_final_result(final_path)
             errors = final_errors + verify_evidence(args.workspace, task, final_result)
+            for warning in evaluate_stop_limits(args.workspace, task)["warnings"]:
+                print(f"kernelpilot: warning: {warning}", file=sys.stderr)
             if errors:
                 raise ContractError("invalid evidence:\n- " + "\n- ".join(errors))
             checked = f" (final result: {final_path.name})" if final_path is not None else ""

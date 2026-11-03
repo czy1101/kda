@@ -69,6 +69,7 @@ Use simple files in the task workspace:
 - `runs/quality.json` for configured public API, module-layer, absolute-import,
   naming/registry, pytest-marker, and unified-dispatch checks.
 - `runs/generalization.json` for the configured guard-shape panel result.
+- `runs/profile-runs.jsonl` for the profiling-capture budget ledger.
 - `runs/` or `outputs/` for generated artifacts.
 
 The exact format is less important than consistency. A future reader should be able to reconstruct what changed, what was measured, and why a candidate was promoted.
