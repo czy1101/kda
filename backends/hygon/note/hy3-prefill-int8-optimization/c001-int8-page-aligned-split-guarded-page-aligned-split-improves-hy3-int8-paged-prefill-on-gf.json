@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "id": "c001-int8-page-aligned-split",
+  "title": "Guarded page-aligned split improves HY3 INT8 paged prefill on gfx936",
+  "status": "confirmed",
+  "created_at": "2026-11-03T07:54:45+00:00",
+  "task": "hy3-prefill-int8-optimization",
+  "task_workspace": "D:/Desktop/codex/.hygon-control",
+  "backend": "hygon",
+  "device": "BW",
+  "arch": "gfx936",
+  "language": "triton",
+  "operator": "hy3-prefill-int8-optimization",
+  "implementation": "src/flag_attn/runtime/backend/_hygon/hy3/prefill/core.py",
+  "metric": "HY3 INT8 median latency (ms)",
+  "direction": "minimize",
+  "aggregation": "geomean_ratio",
+  "unit": "ms",
+  "aggregate_ratio": 1.350624408866606,
+  "improvement_percent": 35.062440886660596,
+  "minimum_improvement_percent": 5.0,
+  "mechanism": "Extending the existing 64x64 page-aligned split path to INT8 lets the paged attention work over more independent KV segments while reusing the kernel's INT32 QK accumulation, explicit QK/V scales, BF16 partial state, and softmax-aware reducer. The trace showed the candidate paged kernel with lower LDS use (8 KiB) and VGPR use (176) than the reference grouped path (32 KiB and 256 VGPR).",
+  "applicability": "Hygon BW/gfx936, HY3 INT8 paged prefill, page size 64, NHD/HND, Q=512 and KV=4096/32768 under the existing metadata-based guard: unmasked or sparsity bucket 2, supported KV layout, at least two default Q tiles, and default CTA count below the existing device-wave threshold.",
+  "transferable_lesson": "When the paged Triton kernel and reducer already support INT8 scaling and partial-state merging, a guarded page-aligned split can be shared across BF16 and INT8 without changing the attention math. Keep the original fallback for short Q, other page sizes/layouts, and unvalidated sparsity classes; benchmark each precision separately.",
+  "limitations": "Measured on one BW/gfx936 environment with batch 1, 32 query heads, 4 KV heads, 64-token pages, Q lengths 127/512 and KV lengths 127/4096/32768. All 12 tested rows improved with a 1.3506x geomean latency speedup. Longer contexts, batch sizes above one, other page sizes, scales beyond benchmark defaults, and other sparsity buckets remain unvalidated. Random-block FA comparison uses an approximate window mask, not the identical mask.",
+  "tested_shapes": [
+    {
+      "shape": "q127_kv127_dense_causal_nhd",
+      "metric_value": 0.3482,
+      "baseline_value": 0.3496,
+      "unit": "ms",
+      "directional_ratio": 1.0040206777713958,
+      "improvement_percent": 0.40206777713958086,
+      "status": "pass"
+    },
+    {
+      "shape": "q512_kv4096_dense_causal_nhd",
+      "metric_value": 1.0339,
+      "baseline_value": 1.7964,
+      "unit": "ms",
+      "directional_ratio": 1.7374987909855886,
+      "improvement_percent": 73.74987909855886,
+      "status": "pass"
+    },
+    {
+      "shape": "q512_kv32768_dense_causal_nhd",
+      "metric_value": 6.0138,
+      "baseline_value": 10.8023,
+      "unit": "ms",
+      "directional_ratio": 1.7962519538395028,
+      "improvement_percent": 79.62519538395027,
+      "status": "pass"
+    },
+    {
+      "shape": "q127_kv127_dense_causal_hnd",
+      "metric_value": 0.3403,
+      "baseline_value": 0.343,
+      "unit": "ms",
+      "directional_ratio": 1.0079341757272995,
+      "improvement_percent": 0.7934175727299486,
+      "status": "pass"
+    },
+    {
+      "shape": "q512_kv4096_dense_causal_hnd",
+      "metric_value": 1.0318,
+      "baseline_value": 1.7994,
+      "unit": "ms",
+      "directional_ratio": 1.7439426245396394,
+      "improvement_percent": 74.39426245396395,
+      "status": "pass"
+    },
+    {
+      "shape": "q512_kv32768_dense_causal_hnd",
+      "metric_value": 5.963,
+      "baseline_value": 10.5847,
+      "unit": "ms",
+      "directional_ratio": 1.7750628878081502,
+      "improvement_percent": 77.50628878081503,
+      "status": "pass"
+    },
+    {
+      "shape": "q127_kv127_random_block_nhd",
+      "metric_value": 0.379,
+      "baseline_value": 0.3882,
+      "unit": "ms",
+      "directional_ratio": 1.0242744063324538,
+      "improvement_percent": 2.4274406332453813,
+      "status": "pass"
+    },
+    {
+      "shape": "q512_kv4096_random_block_nhd",
+      "metric_value": 0.5562,
+      "baseline_value": 0.7337,
+      "unit": "ms",
+      "directional_ratio": 1.3191298094210715,
+      "improvement_percent": 31.91298094210715,
+      "status": "pass"
+    },
+    {
+      "shape": "q512_kv32768_random_block_nhd",
+      "metric_value": 1.9472,
+      "baseline_value": 2.8187,
+      "unit": "ms",
+      "directional_ratio": 1.447565735414955,
+      "improvement_percent": 44.75657354149549,
+      "status": "pass"
+    },
+    {
+      "shape": "q127_kv127_random_block_hnd",
+      "metric_value": 0.3797,
+      "baseline_value": 0.3899,
+      "unit": "ms",
+      "directional_ratio": 1.0268633131419542,
+      "improvement_percent": 2.6863313141954226,
+      "status": "pass"
+    },
+    {
+      "shape": "q512_kv4096_random_block_hnd",
+      "metric_value": 0.5533,
+      "baseline_value": 0.7293,
+      "unit": "ms",
+      "directional_ratio": 1.3180914512922464,
+      "improvement_percent": 31.809145129224635,
+      "status": "pass"
+    },
+    {
+      "shape": "q512_kv32768_random_block_hnd",
+      "metric_value": 1.9436,
+      "baseline_value": 2.767,
+      "unit": "ms",
+      "directional_ratio": 1.4236468409137681,
+      "improvement_percent": 42.364684091376816,
+      "status": "pass"
+    }
+  ],
+  "evidence": [
+    "runs/candidates.jsonl",
+    "runs/benchmark.csv",
+    "runs/int8-page-split-baseline-paired.log",
+    "runs/int8-page-split-candidate-paired.log",
+    "runs/int8-page-split-candidate-correctness.log",
+    "runs/int8-page-split-profile-comparison.txt"
+  ],
+  "evidence_ledger": {
+    "candidates_sha256": "7292b7bbab5ff840a288d03da0a4adbee4fb570af10b36b2c4a76c8ff2ee69e0",
+    "benchmark_sha256": "db8bfd683c35b4bf35f6d56a2f19a1b8e1ae8950e304daffa343685a63c1decf"
+  }
+}

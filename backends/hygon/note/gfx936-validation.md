@@ -5,8 +5,8 @@ status: confirmed
 device: BW
 arch: gfx936
 scope: "Validated architecture, ISA, and calibration anchors for the BW/gfx936 DTK image"
-last_validated: 2026-10-19
-revalidate_after: 2027-01-31
+last_validated: 2026-11-03
+revalidate_after: 2027-02-28
 ---
 
 # Validated Hygon gfx936 reference
@@ -199,9 +199,20 @@ Median one-kernel duration: 6.191676 ms
 The current DTK image listed counters such as `SQ_INSTS_VALU`,
 `SQ_INSTS_VMEM_RD`, `SQ_INSTS_VMEM_WR`, `SQ_INSTS_LDS`, `SQ_WAVES`, and
 `SQ_BUSY_CYCLES`. However, the attempted `rocprofv2 -i` capture returned zero
-without producing a counter result file. Treat numeric PMC data as unavailable
-until a task-local smoke test produces a parseable CSV; never treat missing
-counter output as zero.
+without producing a counter result file.
+
+Re-checked on 2026-11-03 in `jiangrenkai-dev` (DTK `26.04-DCC2602-0317`) with a
+1024×1024 BF16 `torch.mm` workload:
+
+- `rocprofv2 -i pmc.txt -d out -o counters <app>` exited 0, printed nothing, and
+  created no file — the v2 counter path is still broken on this image;
+- `rocprof -i pmc.txt -o counters.csv <app>` (v1 syntax `pmc: SQ_INSTS_VALU`)
+  produced `counters.csv` with the counter column populated.
+
+Treat numeric PMC data as unavailable from v2; route counter work through
+`rocprof` v1 and still smoke-test it, because the path is image-dependent. Never
+treat missing counter output as zero. Command details:
+[profiling-tools.md](profiling-tools.md).
 
 Use `hipprof --hip-trace --stats` for launch gaps and synchronization questions.
 Use `rocm-smi` and `rocminfo` only as device-state and architecture probes, not

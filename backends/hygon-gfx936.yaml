@@ -153,3 +153,10 @@ notes:
     previously rejected approach is not retried unchanged, and use
     backends/hygon/note/OPERATOR-PORTING.md when the operator is new to this
     device.
+  - >-
+    Exact profiler commands and their failure modes are recorded in
+    backends/hygon/note/profiling-tools.md. On the validated 2026-11-03 image,
+    rocprofv2 --kernel-trace produced a usable results_kernels.csv, rocprofv2 -i
+    exited zero without writing a counter file, and rocprof v1 with pmc syntax
+    produced the counter CSV. Route counters through v1, keep the trace path for
+    timing, and never measure latency from a v1 replay run.

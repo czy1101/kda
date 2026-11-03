@@ -5,11 +5,15 @@ status: confirmed
 device: BW
 arch: gfx936
 scope: "Capture and read rocprofv2 kernel traces, counter exports, hipprof timelines, and device probes"
-last_validated: 2026-10-19
-revalidate_after: 2027-01-31
+last_validated: 2026-11-03
+revalidate_after: 2027-02-28
 ---
 
 # Hygon gfx936 profiling workflow
+
+For the exact command per tool, the artifact it produces, and its failure modes,
+see [profiling-tools.md](profiling-tools.md). This document covers the sequence
+and the evidence rules.
 
 KDA treats Hygon profiling as a backend capability selected from live probes,
 not as a hard-coded assumption. Set a task target such as:
@@ -51,8 +55,8 @@ capture can be produced; benchmark timing alone is not profiler evidence.
 
 | Tool | Use | Requirement |
 |---|---|---|
-| `rocprofv2` | Kernel trace and task-selected hardware counters | Default for kernel-level performance analysis. |
-| `rocprof` | Legacy API/kernel trace and hardware counters | Fallback only after its task-local capture smoke test succeeds. |
+| `rocprofv2` | Kernel trace | Default for kernel-level performance analysis. |
+| `rocprof` v1 | Hardware counters (and a legacy trace) | The only counter path that produced a parseable export on the validated image; keep its capture separate from latency measurement. |
 | `hipprof` | Timeline, synchronization, launch gaps, host/device overlap | Use for timeline questions or when timeline evidence is needed to explain latency. |
 | `rocsys` | Selective start/stop control of a `rocprofv2` profiling session | Use for long-running workloads needing a selected capture window; not an independent profiler. |
 | `rocminfo` | Runtime agent and architecture information | Run during Hygon preflight/profile setup. |
@@ -60,9 +64,11 @@ capture can be produced; benchmark timing alone is not profiler evidence.
 
 Do not treat tool discovery or `--list-basic`/`--list-counters` output as proof
 that a capture is usable. Only use metrics after capture and structured export
-complete for the target workload. The `rocprof --list-basic` probe succeeded in
-the checked `xiaodan-dev` DTK image, but its capture path still needs a
-task-local smoke test. Some DTK images have a stale path issue.
+complete for the target workload. On 2026-11-03 in `jiangrenkai-dev`,
+`rocprofv2 --list-counters` listed gfx936 counters while `rocprofv2 -i` exited
+zero without producing any file, and `rocprof` v1 produced a counter CSV from
+the same workload. The counter route is image-dependent: smoke-test it every
+time.
 
 ## Recommended KDA sequence
 
@@ -183,9 +189,15 @@ implementation fuses or splits work.
 
 ## Tool limitations
 
-The legacy `rocprof` v1 executable is not the default route because some Hygon
-DTK images contain a stale hard-coded `/opt/dtk-26.04/rocminfo` path. It is
-declared as a fallback, and the current `xiaodan-dev` image passed
-`rocprof --list-basic`; require a task-local capture smoke test before using
-its trace or counter output. Missing counters or unavailable timeline tools
-are capability limits, not evidence of a performance improvement.
+- `rocprofv2 -i` counter capture produced no file on the validated image; use
+  `rocprof` v1 for counters and keep the trace path for timing.
+- `rocprof` v1 replays the workload per PMC group, so its run is not a latency
+  measurement. Some DTK images also contain a stale hard-coded
+  `/opt/dtk-26.04/rocminfo` path; smoke-test the capture before relying on it.
+- `hipprof` needs the DTK environment on `LD_LIBRARY_PATH`; a bare invocation
+  fails to load `libperfetto.so.5`.
+- `rocsys` only controls a session; it does not collect data by itself.
+- `proton` / `triton.profiler` is unusable on the FlagGems Triton build in the
+  validated image (`cannot import name 'amd' from triton._C.libtriton`).
+- Missing counters or unavailable timeline tools are capability limits, not
+  evidence of a performance improvement.

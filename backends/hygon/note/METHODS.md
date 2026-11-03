@@ -90,6 +90,7 @@ The following are open, not "known to be impossible":
 |---|---|
 | What are the validated hardware limits and calibration numbers? | [gfx936-validation.md](gfx936-validation.md) |
 | How do I capture and read a profile? | [profiling-workflow.md](profiling-workflow.md) |
+| Which exact command, and why did it produce no file? | [profiling-tools.md](profiling-tools.md) |
 | MMAC or vector FMA, and when to fuse rows? | [mmac-fma-path-selection.md](mmac-fma-path-selection.md) |
 | GQA reuse and split-KV patterns | [hy3-prefill-gqa-split-kv.md](hy3-prefill-gqa-split-kv.md) |
 | Reduction, memory-bound, and launch-bound patterns | [vector-reduction-and-launch-bound.md](vector-reduction-and-launch-bound.md) |
