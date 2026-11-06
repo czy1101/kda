@@ -1,0 +1,55 @@
+version: 1
+id: iluvatar-ivcore11
+
+match:
+  backend: corex
+  arches: [ivcore11, sm71, "71"]
+  devices: [BI-V150, BI-V150 OAM, Iluvatar BI-V150 OAM, V150]
+  languages: [triton, cuda, corex, cpp]
+
+skills:
+  always:
+    - skills/iluvatar-v150-optimization
+  when_discovering:
+    - skills/backend-profiler-discovery
+  when_profiling:
+    - skills/iluvatar-ixkn-analysis
+  when_researching: []
+
+analysis_tools:
+  - id: ixkn
+    kind: kernel-profiler
+    priority: 100
+    probe: command -v ixkn-cli >/dev/null 2>&1
+    version_command: ixkn-cli --version
+    capabilities: [kernel_counters, structured_export]
+    skills: [skills/iluvatar-ixkn-analysis]
+  - id: ixobjdump
+    kind: compiler-tool
+    priority: 50
+    probe: command -v ixobjdump >/dev/null 2>&1
+    capabilities: [disassembly]
+    skills: [skills/iluvatar-ixkn-analysis]
+
+capabilities:
+  profilers: [ixkn]
+  structured_profile_export: true
+  reference_profile_comparison: false
+  ai_profile_fallback: true
+  low_level_artifacts: [triton-ir, llvm-ir, native-asm]
+
+extensions:
+  tle:
+    status: experimental
+    required: false
+    skill: skills/tle-optimization
+    project_marker: tle-wiki
+    reason: Historical V150 probes do not replace explicit task enablement and project Wiki/API checks.
+
+notes:
+  - Use target.backend corex even when the installed runtime exposes torch.cuda compatibility APIs.
+  - Match fields describe the V150 target; sm71/71 are backend architecture aliases, not NVIDIA capability claims.
+  - Load native hardware opportunities before choosing candidates; confirm selection through IR/assembly and dynamic behavior through relevant discovered counters.
+  - These declarations permit discovery only; task-local profiling commands and capture/export success remain necessary.
+  - Structured CSV export was documented on CoreX 4.4.0; no automated reference-report comparison adapter is claimed.
+  - Hardware facts are scoped to the knowledge base environment and must be rechecked on a different device or software version.

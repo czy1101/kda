@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KDA functional capture and export evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "environment_fingerprint", "tools"],
+  "properties": {
+    "version": {"const": 1},
+    "environment_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "tools": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status", "recorded_at"],
+        "properties": {
+          "status": {"enum": ["failed", "verified", "untested"]},
+          "recorded_at": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "T-Head PPU Kernel Optimizer"
+  short_description: "Locate slow kernels and optimize verified 810E bottlenecks"
+  default_prompt: "Use $ppu-kernel-optimizer to split the operator timeline, inspect the slow kernel's compiled path, verify its bottleneck, and test a targeted change."

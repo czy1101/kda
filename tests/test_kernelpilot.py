@@ -255,6 +255,30 @@ class KernelPilotTests(unittest.TestCase):
         strategy = kernelpilot.select_analysis_strategy(task)
         self.assertEqual(strategy["route"], "benchmark_only")
 
+    def test_v150_backend_routes_hardware_and_evidence_skills(self):
+        task = valid_task()
+        task["target"] = {
+            "backend": "corex", "device": "BI-V150 OAM",
+            "arch": "ivcore11", "language": "triton",
+        }
+        profile = kernelpilot._backend_profile(task)
+        self.assertEqual(profile["id"], "iluvatar-ivcore11")
+        self.assertEqual(kernelpilot.validate_backend_profile(task), [])
+        self.assertIn("skills/iluvatar-v150-optimization", profile["skills"]["always"])
+        self.assertIn("skills/iluvatar-ixkn-analysis", profile["skills"]["when_profiling"])
+        task["target"]["profile"] = profile["id"]
+        self.assertEqual(kernelpilot.validate_backend_profile(task), [])
+
+    def test_v150_profile_does_not_match_another_corex_chip(self):
+        task = valid_task()
+        task["target"] = {
+            "backend": "corex", "device": "BI-V150 OAM",
+            "arch": "ivcore11", "language": "triton",
+        }
+        for field, value in (("device", "BI-V100"), ("arch", "ivcore10")):
+            mismatched = {"target": dict(task["target"], **{field: value})}
+            self.assertEqual(kernelpilot._backend_profile(mismatched), {})
+
     def test_unique_backend_profile_is_selected_when_omitted(self):
         profile = kernelpilot._backend_profile(valid_task())
         self.assertEqual(profile["id"], "cuda-sm90")

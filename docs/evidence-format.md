@@ -15,6 +15,18 @@ changes; stale evidence is rejected.
 
 ## Benchmark ledger
 
+Functional capture/export checks are stored separately in
+`runs/analysis-functional.json` (`schemas/analysis-functional.schema.json`).
+Installation discovery remains unchanged. The loader merges same-environment
+functional status in memory; strategy excludes failed tools, and profile
+execution refuses automatic retries even when an older strategy selected one.
+Rediscovery does not erase these failures. Only verified capture plus a matched,
+valid structured export supports profiler usability; a version or help probe
+does not. Preserve the request scope, units, commands and raw logs in the tool
+record. `verified` applies to that recorded request, not all tool features.
+Explicit retries or a changed environment can invalidate a prior failure;
+required policies still fail when no compatible functional capability remains.
+
 `runs/benchmark.csv` has one row per candidate and required shape:
 
 ```csv

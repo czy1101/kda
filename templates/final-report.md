@@ -1,5 +1,11 @@
 # Final Optimization Report
 
+Adapt this template to the user's requested deliverable using
+`skills/operator-optimization-report/SKILL.md`. For a single-document
+successful-method summary, expand only retained mechanisms, embed each method's
+complete benchmark comparison and key code evidence, and omit audit-only
+sections. Keep all attempts and workflow events in the internal ledger.
+
 ## Outcome
 
 - Status:
@@ -27,8 +33,11 @@
 
 ## Candidate summary
 
-List every candidate, including rejected and failed attempts, with its
-hypothesis, result, decision, reason, and rollback status.
+For an experiment-audit report, list every candidate, including rejected and
+failed attempts, with its hypothesis, result, decision, reason, and rollback
+status. For a successful-method summary, replace this section with retained
+methods in cumulative order; include the full required matrix for each adjacent
+comparison and keep negative rows visible.
 
 ## Analysis summary
 
@@ -53,8 +62,10 @@ hypothesis, result, decision, reason, and rollback status.
 
 ## Workflow execution record
 
-List workflow errors, failed stages, retries, interruptions, recoveries, and
-early exits in execution order. Do not omit recovered errors.
+Include this section for an execution-audit deliverable: list workflow errors,
+failed stages, retries, interruptions, recoveries, and early exits in execution
+order. Preserve all events internally even when a successful-method deliverable
+omits this audit section.
 
 ## Integrity statement
 

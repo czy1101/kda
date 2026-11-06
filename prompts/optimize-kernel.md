@@ -7,7 +7,10 @@ profile, and only the Skills routed for the current stage.
 Treat the workflow as the intended execution contract for one complete run.
 Use its declared transition for each observed stage result. If a transition,
 action, tool, or required artifact cannot be completed, record the deviation
-and recovery in `runs/stage-events.jsonl` and the final report.
+and recovery in `runs/stage-events.jsonl`. Include this history in an execution-
+audit report; for a user-requested successful-method summary, follow
+`skills/operator-optimization-report/SKILL.md` without copying the internal
+execution ledger into the deliverable.
 
 ## Execution and safety
 
@@ -104,9 +107,12 @@ the action, result, evidence, and selected transition to
 `runs/stage-events.jsonl`. Keep the candidate and benchmark ledgers consistent
 with their schemas.
 
-Finish with `docs/final-report.md` using `templates/final-report.md`, and return
-the structured result required by `schemas/run-result.schema.json`. The report
-must identify the restored/deployed best correct candidate, comparator, metric,
-per-shape and aggregate result, correctness, generalization evidence, remaining
-gap, stop reason, rejected candidates, unavailable capabilities, TLE assessment,
-and every workflow error or recovery in execution order.
+Finish at the user-selected report path, or `docs/final-report.md` by default.
+Read `skills/operator-optimization-report/SKILL.md` and adapt
+`templates/final-report.md` to the requested deliverable. Return the structured
+result required by `schemas/run-result.schema.json`. Identify the restored or
+deployed best correct candidate, comparator, metric, full per-shape and aggregate
+results, correctness provenance, and remaining bottlenecks. An audit report also
+includes the stop reason, generalization, rejected candidates, unavailable
+capabilities, TLE assessment, and workflow errors or recoveries in execution
+order. Preserve all internal records when the user requests only retained methods.

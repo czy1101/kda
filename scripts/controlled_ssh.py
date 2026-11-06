@@ -105,6 +105,7 @@ class ControlledSSH:
         shell: str | None = None,
         capture: bool = False,
         input_bytes: bytes | None = None,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess:
         return subprocess.run(
             self._argv(script, shell),
@@ -112,6 +113,7 @@ class ControlledSSH:
             capture_output=capture,
             text=input_bytes is None,
             check=False,
+            timeout=timeout,
         )
 
     def run_contract(self, section: str, *, capture: bool = False) -> subprocess.CompletedProcess:

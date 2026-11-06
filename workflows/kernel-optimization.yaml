@@ -249,6 +249,9 @@ stages:
     action: verify_scope_goal_and_evidence
     next: report
 
+  # Read ../skills/operator-optimization-report/SKILL.md before reporting.
+  # Select the requested delivery scope; retain full internal evidence while
+  # embedding complete comparisons and key code in a standalone deliverable.
   - id: report
     action: generate_final_report
     terminal: true

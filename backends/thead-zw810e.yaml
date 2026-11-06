@@ -1,0 +1,41 @@
+version: 1
+id: thead-zw810e
+match:
+  backend: ppu
+  arches: [ppu001]
+  devices: [PPU-ZW810E, ZW810E, 真武810E]
+  languages: [triton]
+skills:
+  always: [skills/ppu-kernel-optimizer]
+  when_discovering: [skills/backend-profiler-discovery]
+  when_profiling: [skills/ppu-kernel-optimizer]
+  when_researching: []
+analysis_tools:
+  - id: acu
+    kind: kernel-profiler
+    priority: 100
+    probe: command -v acu >/dev/null 2>&1
+    version_command: acu --version
+    capabilities: [kernel_counters, structured_export]
+  - id: asys
+    kind: timeline-profiler
+    priority: 80
+    probe: command -v asys >/dev/null 2>&1
+    version_command: asys --version
+    capabilities: [timeline, structured_export]
+  - id: hgobjdump
+    kind: compiler-tool
+    priority: 10
+    probe: command -v hgobjdump >/dev/null 2>&1
+    capabilities: [disassembly]
+capabilities:
+  profilers: [acu, asys]
+  structured_profile_export: true
+  reference_profile_comparison: false
+  ai_profile_fallback: true
+  low_level_artifacts: [triton-ir, llvm-ir, hgbin]
+notes:
+  - KDA backend ppu identifies the hardware, not Triton's CUDA compatibility target.
+  - ppu001 is the hardware architecture; ppu_10 is an HGCC target, not an alias here.
+  - Probes are POSIX executor commands; local Windows discovery uses probe_environment.py.
+  - Declarations are an allowlist, not evidence of capture or export success.

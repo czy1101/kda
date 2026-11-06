@@ -40,6 +40,7 @@ DEFAULT_TASK = Path(".kernelpilot/task.yaml")
 EVIDENCE_DIRS = ("docs", "runs", "outputs", "profile")
 ANALYSIS_CAPABILITIES = Path("runs/analysis-capabilities.json")
 ANALYSIS_STRATEGY = Path("runs/analysis-strategy.json")
+ANALYSIS_FUNCTIONAL = Path("runs/analysis-functional.json")
 TLE_ASSESSMENT = Path("runs/tle-assessment.json")
 CHECKPOINT_ROOT = Path(".kernelpilot/checkpoints")
 REQUIRED_TOP_LEVEL = (
@@ -242,7 +243,7 @@ def _run_environment_probe(
     if execution.get("transport", "local") == "ssh":
         shell, script = remote_command_script(task, command)
         return ControlledSSH(task, ssh_bin=ssh_bin).run_script(
-            script, shell=shell, capture=True
+            script, shell=shell, capture=True, timeout=15
         )
     shell, script = _command_script(task, command)
     return subprocess.run(
@@ -251,6 +252,7 @@ def _run_environment_probe(
         text=True,
         capture_output=True,
         check=False,
+        timeout=15,
     )
 
 
@@ -311,7 +313,10 @@ def discover_analysis_tools(
             probe = spec.get("probe")
             if not isinstance(probe, str) or not probe.strip():
                 continue
-            completed = _run_environment_probe(workspace, task, probe, ssh_bin)
+            try:
+                completed = _run_environment_probe(workspace, task, probe, ssh_bin)
+            except (OSError, subprocess.TimeoutExpired, SSHAdapterError) as error:
+                completed = subprocess.CompletedProcess([], 125, "", str(error))
             available = completed.returncode == 0
             record: dict[str, Any] = {
                 "id": spec.get("id"),
@@ -326,7 +331,10 @@ def discover_analysis_tools(
                 record["probe_error"] = stderr[:2000]
             version_command = spec.get("version_command")
             if available and isinstance(version_command, str) and version_command.strip():
-                version = _run_environment_probe(workspace, task, version_command, ssh_bin)
+                try:
+                    version = _run_environment_probe(workspace, task, version_command, ssh_bin)
+                except (OSError, subprocess.TimeoutExpired, SSHAdapterError) as error:
+                    version = subprocess.CompletedProcess([], 125, "", str(error))
                 version_text = ((version.stdout or "") + (version.stderr or "")).strip()
                 record["version_exit_code"] = version.returncode
                 if version_text:
@@ -361,7 +369,34 @@ def load_analysis_capabilities(
                 "analysis capability evidence belongs to a different or changed task environment; "
                 "rerun discover-tools"
             )
+    functional_path = workspace / ANALYSIS_FUNCTIONAL
+    if task is not None and functional_path.is_file():
+        functional = json.loads(functional_path.read_text(encoding="utf-8"))
+        if functional.get("environment_fingerprint") == value.get("environment_fingerprint"):
+            for tool in value.get("tools", []):
+                evidence = functional.get("tools", {}).get(tool["id"])
+                if evidence:
+                    tool["functional_status"] = evidence["status"]
     return value
+
+
+def record_analysis_function(workspace: Path, task: dict[str, Any], tool: str,
+                             status: str, evidence: dict[str, Any]) -> None:
+    """Persist capture/export evidence separately from installation discovery."""
+    if status not in ("failed", "verified", "untested"):
+        raise ContractError("invalid functional status")
+    if tool not in {s.get("id") for s in _analysis_tool_specs(_backend_profile(task))}:
+        raise ContractError("functional evidence tool is not backend-declared")
+    path = workspace / ANALYSIS_FUNCTIONAL
+    fingerprint = _analysis_environment_fingerprint(workspace, task)
+    value = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if value.get("environment_fingerprint") != fingerprint:
+        value = {"version": 1, "environment_fingerprint": fingerprint, "tools": {}}
+    record = {"status": status, "recorded_at": _utc_now(), **evidence}
+    record["status"] = status
+    value["tools"][tool] = record
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
 def assess_tle(workspace: Path, task: dict[str, Any], ssh_bin: str = "ssh") -> dict[str, Any]:
@@ -471,6 +506,7 @@ def select_analysis_strategy(
             tool.get("id")
             for tool in discovery.get("tools") or []
             if isinstance(tool, dict) and tool.get("available")
+            and tool.get("functional_status") != "failed"
         ]
     elif discovery_policy == "disabled":
         available_ids = [explicit] if explicit and explicit != "auto" else []
@@ -479,7 +515,8 @@ def select_analysis_strategy(
     else:
         available_ids = []
 
-    available_specs = [specs_by_id[name] for name in available_ids if name in specs_by_id]
+    available_specs = [specs_by_id[name] for name in available_ids if name in specs_by_id
+                       and specs_by_id[name].get("kind") != "compiler-tool"]
     ranked = _rank_analysis_tools(available_specs, preferred)
     if explicit and explicit != "auto":
         ranked = [tool for tool in ranked if tool.get("id") == explicit]
@@ -561,10 +598,15 @@ def select_analysis_strategy(
         else:
             skipped_extensions[name] = extension.get("reason", "not declared by backend")
 
+    verified = {t.get("id") for t in (discovery or {}).get("tools", [])
+                if t.get("functional_status") == "verified"}
+    analysis_level = (1 if selected_profiler == "acu" and "acu" in verified else
+                      2 if selected_profiler == "asys" and "asys" in verified else 3)
     return {
         "backend_profile": profile.get("id"),
         "environment_fingerprint": (discovery or {}).get("environment_fingerprint"),
         "route": route,
+        "analysis_level": analysis_level if profile.get("id") == "thead-zw810e" else None,
         "tool_discovery_policy": discovery_policy,
         "tool_discovery_status": (discovery or {}).get("status", "not_run"),
         "discovery_required": discovery_pending,
@@ -573,7 +615,8 @@ def select_analysis_strategy(
         "unavailable_profilers": [
             tool.get("id")
             for tool in (discovery or {}).get("tools") or []
-            if isinstance(tool, dict) and not tool.get("available")
+            if isinstance(tool, dict) and (not tool.get("available")
+                                         or tool.get("functional_status") == "failed")
         ],
         "structured_profile_export": bool(
             "structured_export" in selected_capabilities
@@ -771,8 +814,11 @@ def run_contract_command(
     capture: bool = False,
     tool: str | None = None,
     variant: str = "candidate",
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     if section == "profile":
+        if (task.get("analysis") or {}).get("profiling") == "disabled":
+            raise ContractError("analysis.profiling is disabled")
         if not tool:
             strategy_path = workspace / ANALYSIS_STRATEGY
             if strategy_path.is_file():
@@ -784,6 +830,16 @@ def run_contract_command(
             if not tool:
                 discovery = load_analysis_capabilities(workspace, task) or {}
                 tool = discovery.get("selected")
+        discovery = load_analysis_capabilities(workspace, task)
+        if (_backend_profile(task) or {}).get("id") == "thead-zw810e":
+            if not discovery or tool not in ("acu", "asys"):
+                raise ContractError("PPU capture requires a discovered acu/asys tool")
+        if tool and discovery:
+            matched = next((t for t in discovery.get("tools", []) if t["id"] == tool), None)
+            if matched is None or not matched.get("available"):
+                raise ContractError(f"profile tool {tool!r} is not discovered")
+            if matched.get("functional_status") == "failed":
+                raise ContractError(f"profile tool {tool!r} failed in this environment; no automatic retry")
         config = _profile_tool_config(task, tool)
         command_field = {
             "candidate": "candidate_command",
@@ -807,15 +863,41 @@ def run_contract_command(
     execution = task.get("execution") or {"transport": "local"}
     if execution.get("transport", "local") == "ssh":
         shell, script = remote_command_script(task, config["command"])
-        return ControlledSSH(task).run_script(script, shell=shell, capture=capture)
-    shell, script = _command_script(task, config["command"])
-    return subprocess.run(
-        [shell, "-lc", script],
-        cwd=workspace,
-        text=True,
-        capture_output=capture,
-        check=False,
-    )
+        execute = lambda: ControlledSSH(task).run_script(
+            script, shell=shell, capture=capture or section == "profile", timeout=timeout)
+    else:
+        shell, script = _command_script(task, config["command"])
+        execute = lambda: subprocess.run(
+            [shell, "-lc", script], cwd=workspace, text=True,
+            capture_output=capture or section == "profile", check=False, timeout=timeout)
+    try:
+        result = execute()
+    except (subprocess.TimeoutExpired, OSError) as error:
+        if section == "profile" and tool:
+            record_analysis_function(workspace, task, tool, "failed",
+                                     {"variant": variant, "reason": str(error)})
+        raise
+    if section == "profile" and tool:
+        logs = workspace / "profile" / "tool-validation" / tool
+        logs.mkdir(parents=True, exist_ok=True)
+        stamp = str(__import__("time").time_ns())
+        for stream in ("stdout", "stderr"):
+            (logs / f"{stamp}-{variant}.{stream}.txt").write_text(
+                getattr(result, stream) or "", encoding="utf-8")
+        text_output = ((result.stdout or "") + (result.stderr or "")).lower()
+        invalid = any(marker in text_output for marker in (
+            "hggc_error_not_ready", "device is not ready for profiling",
+            "no kernel in report", "permission denied", "hggc pcm api fail"))
+        if result.returncode or invalid:
+            record_analysis_function(workspace, task, tool, "failed", {
+                "variant": variant, "exit_code": result.returncode,
+                "reason": "capture/export failed or invalid report", "logs": str(logs),
+                "command": config["command"],
+            })
+        if not capture:
+            print(result.stdout or "", end="")
+            print(result.stderr or "", end="", file=sys.stderr)
+    return result
 
 
 def run_preflight(workspace: Path, task: dict[str, Any]) -> None:
@@ -972,7 +1054,7 @@ def snapshot_forbidden(workspace: Path, task: dict[str, Any]) -> dict[str, str]:
     forbidden = task.get("constraints", {}).get("forbidden_paths", [])
     snapshot: dict[str, str] = {}
     for path in _iter_contract_paths(workspace, forbidden):
-        relative = str(path.relative_to(workspace))
+        relative = path.relative_to(workspace).as_posix()
         snapshot[relative] = _digest(path)
     return snapshot
 
@@ -1636,7 +1718,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.sandbox,
                 args.dry_run,
             )
-    except (ContractError, SSHAdapterError, OSError, yaml.YAMLError) as error:
+    except (ContractError, SSHAdapterError, OSError, subprocess.TimeoutExpired, yaml.YAMLError) as error:
         print(f"kernelpilot: {error}", file=sys.stderr)
         return 2
     raise AssertionError("unreachable")

@@ -82,11 +82,33 @@ ln -sfn "$(pwd)/skills/backend-profiler-discovery" ~/.codex/skills/backend-profi
 ln -sfn "$(pwd)/skills/triton-cuda-optimization" ~/.codex/skills/triton-cuda-optimization
 ln -sfn "$(pwd)/skills/nvidia-profile-comparison" ~/.codex/skills/nvidia-profile-comparison
 ln -sfn "$(pwd)/skills/tle-optimization" ~/.codex/skills/tle-optimization
+ln -sfn "$(pwd)/skills/iluvatar-v150-optimization" ~/.codex/skills/iluvatar-v150-optimization
+ln -sfn "$(pwd)/skills/iluvatar-ixkn-analysis" ~/.codex/skills/iluvatar-ixkn-analysis
+ln -sfn "$(pwd)/skills/ppu-kernel-optimizer" ~/.codex/skills/ppu-kernel-optimizer
 ```
 
 Skills are user-level: they become available to every Codex session, not only to
 sessions started in this repository. Verify inside a Codex session with
 `/skills`.
+
+For Zhenwu 810E, declare `target.backend: ppu`, `target.arch: ppu001`,
+`target.device: PPU-ZW810E`, and `target.language: triton`; the
+`thead-zw810e` profile loads `ppu-kernel-optimizer` even without a profile
+command. These are hardware routing identifiers, independent of Triton's CUDA
+compatibility target. Read the skill's references for bounded no-PCM analysis,
+Windows link setup, and functional capture/export validation. Installation
+discovery does not prove profiler usability. `runs/analysis-functional.json`
+retains failures for the same environment and prevents automatic retries;
+`auto` may fall back while `required` remains an unmet contract requirement.
+
+For Iluvatar BI-V150 tasks, set `target.backend: corex`,
+`target.arch: ivcore11`, `target.device: BI-V150 OAM`, and the permitted
+`target.language` (for example, `triton`). The `iluvatar-ivcore11` backend
+profile routes the hardware optimization skill before diagnosis and the ixKN/IR
+analysis skill when profiling. Set `target.profile: iluvatar-ivcore11` explicitly
+when desired. The hardware skill assesses native compute/staging opportunities
+and verifies their triggers; task correctness and unprofiled benchmarks still
+decide which candidates are retained.
 
 Initialize the task in the operator repository, not here, then let KernelPilot
 construct the full Codex prompt with absolute KDA paths:
