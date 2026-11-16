@@ -46,12 +46,14 @@ New records use `metric`, `direction`, `metric_value`, `baseline_value`, and
 KernelPilot stores baseline and best snapshots under
 `.kernelpilot/checkpoints/`. Only a correct candidate that has passed the
 configured benchmark and generalization decision may replace the best
-checkpoint. KernelPilot restores best when the Codex process exits and rejects
+checkpoint. KernelPilot restores best when the agent process exits and rejects
 a final result whose reported best candidate does not match that checkpoint.
 
 ## Structured final result
 
-Automated Codex runs use `schemas/run-result.schema.json`. The runner verifies
+Automated Codex and OpenCode runs use `schemas/run-result.schema.json`. Codex
+writes it through `--output-last-message`; OpenCode writes it to the path in the
+generated prompt, with event-text extraction as a fallback. The runner verifies
 that `best_candidate` exists in the candidate ledger and that
 `target_reached` agrees with the benchmark ledger.
 

@@ -9,7 +9,7 @@ This repository documents an early research prototype and remains under active d
 | Path | Purpose |
 |---|---|
 | `docs/agent-flow.md` | Minimal end-to-end KDA workflow. |
-| `AGENTS.md` | Repository-facing agent instructions for Codex. |
+| `AGENTS.md` | Repository-facing agent instructions for Codex and OpenCode. |
 | `CLAUDE.md` | Repository-facing agent instructions for Claude Code. |
 | `prompts/README.md` | How to use prompt templates. |
 | `prompts/basic-flow.md` | Generic starter prompt for a new task. |
@@ -20,15 +20,17 @@ This repository documents an early research prototype and remains under active d
 | `workflows/kernel-optimization.yaml` | Declarative definition of the optimization loop. |
 | `schemas/task.schema.yaml` | Task contract schema. |
 | `schemas/candidate.schema.json` | Candidate ledger record schema. |
-| `schemas/run-result.schema.json` | Structured result returned by automated Codex runs. |
+| `schemas/run-result.schema.json` | Structured result returned by automated agent runs. |
 | `schemas/backend.schema.yaml` | Contract for backend-to-skill routing profiles. |
+| `docs/opencode.md` | OpenCode entry points on an S60 host or a controller with SSH. |
+| `docs/enflame-s60-runbook.md` | S60 device, measurement, TLE, and evidence rules. |
 | `docs/evidence-format.md` | Canonical benchmark and candidate ledger format. |
 | `docs/backend-extensions.md` | How to add a chip backend without growing prompts. |
 | `backends/` | Backend/architecture matching and stage-specific skill routing. |
 | `knowledge/` | Evidence-scoped optimization reference, including Enflame S60/GCU300 compiler paths and Torch mechanisms. |
 | `templates/task.yaml` | Fill-in task contract. |
 | `templates/operator-workspace/` | Files to drop into an operator repository. |
-| `scripts/kernelpilot.py` | Minimal task validator, environment-aware command runner, and Codex driver. |
+| `scripts/kernelpilot.py` | Minimal task validator, environment-aware command runner, and Codex/OpenCode driver. |
 | `scripts/controlled_ssh.py` | Allow-listed, hash-guarded adapter for execution-only GPU hosts. |
 | `CONTRIBUTING.md` | Contribution process and DCO sign-off requirements. |
 | `THIRD_PARTY_NOTICES.md` | Third-party component and license disclosures. |
@@ -61,17 +63,23 @@ Use KernelWiki from this repository's pinned submodule. A direct upstream
 checkout may contain artifact snapshots governed by additional terms that are
 omitted from this distribution.
 
-## Using KDA with Codex
+## Using KDA with Codex or OpenCode
 
 The workflow assets here are agent-agnostic: Markdown prompts, a declarative
-workflow, JSON Schemas, and `SKILL.md` directories. Two naming differences
-matter when the driver is Codex instead of Claude Code.
+workflow, JSON Schemas, and `SKILL.md` directories. KernelPilot supports two
+non-interactive drivers without changing the task contract or evidence gates:
 
-| Purpose | Claude Code | Codex |
-|---|---|---|
-| Repository instructions | `CLAUDE.md` | `AGENTS.md` |
-| Skills | symlink into `~/.claude/skills/` | symlink into `~/.codex/skills/` |
-| Start a task | paste `prompts/basic-flow.md` | paste `prompts/optimize-kernel.md` |
+| Purpose | Claude Code | Codex | OpenCode |
+|---|---|---|---|
+| Repository instructions | `CLAUDE.md` | `AGENTS.md` | `AGENTS.md` |
+| Skills | symlink into `~/.claude/skills/` | symlink into `~/.codex/skills/` | project `skills` config or `.opencode/skills/` |
+| Start a task | paste `prompts/basic-flow.md` | paste `prompts/optimize-kernel.md` | `kernelpilot.py prompt` or `optimize --agent opencode` |
+| Non-interactive driver | not provided here | `codex exec` | `opencode run --format json` |
+
+`--agent auto` (the default) honours `KERNELPILOT_AGENT`, then prefers an
+installed Codex executable, then an installed OpenCode executable. Explicit
+selection is recommended for reproducible runs. Existing scripts that pass
+`--codex-bin` continue to use Codex.
 
 Install the skills for Codex:
 
@@ -85,24 +93,33 @@ ln -sfn "$(pwd)/skills/nvidia-profile-comparison" ~/.codex/skills/nvidia-profile
 ln -sfn "$(pwd)/skills/tle-optimization" ~/.codex/skills/tle-optimization
 ```
 
-Skills are user-level: they become available to every Codex session, not only to
-sessions started in this repository. Verify inside a Codex session with
+Skills are user-level for Codex: they become available to every Codex session,
+not only sessions started in this repository. Verify inside a Codex session with
 `/skills`.
 
+For OpenCode, `kernelpilot.py init --agent opencode` writes
+`<operator-repo>/.opencode/opencode.jsonc` with the KDA `skills/` directory on
+the project skill path. OpenCode also discovers `.opencode/skills/`,
+`.claude/skills/`, and `.agents/skills/` if you prefer to link individual skills.
+
 Initialize the task in the operator repository, not here, then let KernelPilot
-construct the full Codex prompt with absolute KDA paths:
+construct the full agent prompt with absolute KDA paths:
 
 ```bash
 python3 <kda>/scripts/kernelpilot.py init <operator-repo>
+# OpenCode project setup:
+python3 <kda>/scripts/kernelpilot.py init --agent opencode <operator-repo>
 # Fill <operator-repo>/.kernelpilot/task.yaml, then:
 python3 <kda>/scripts/kernelpilot.py optimize --workspace <operator-repo>
+python3 <kda>/scripts/kernelpilot.py optimize --agent opencode \
+  --model <provider/model> --workspace <operator-repo>
 ```
 
-The repository now includes a deliberately small execution layer. It validates
-the contract, applies the declared environment setup, launches Codex in
-non-interactive mode, captures JSONL events, checks required evidence, and
-rejects runs that modify explicitly forbidden paths. The agent still owns
-optimization judgment; the runner owns reproducibility and gates.
+The repository includes a deliberately small execution layer. It validates the
+contract, applies the declared environment setup, launches the selected agent
+non-interactively, captures events, checks required evidence, and rejects runs
+that modify explicitly forbidden paths. The agent still owns optimization
+judgment; the runner owns reproducibility and gates.
 
 ```bash
 # Validate the task and its environment preflight.
@@ -115,25 +132,39 @@ python3 <kda>/scripts/kernelpilot.py run correctness --workspace <operator-repo>
 python3 <kda>/scripts/kernelpilot.py discover-tools --workspace <operator-repo>
 python3 <kda>/scripts/kernelpilot.py strategy       --workspace <operator-repo>
 
-# Inspect the Codex invocation without running it.
-python3 <kda>/scripts/kernelpilot.py optimize --workspace <operator-repo> --dry-run
+# Inspect the selected agent invocation without running it.
+python3 <kda>/scripts/kernelpilot.py optimize --agent codex --workspace <operator-repo> --dry-run
+python3 <kda>/scripts/kernelpilot.py optimize --agent opencode \
+  --model <provider/model> --workspace <operator-repo> --dry-run
 
-# Run the optimization loop. Codex authentication must already be configured.
-python3 <kda>/scripts/kernelpilot.py optimize --workspace <operator-repo>
+# Print the same prompt for a manually driven OpenCode session.
+python3 <kda>/scripts/kernelpilot.py prompt --agent opencode --workspace <operator-repo>
+
+# Run the optimization loop. Agent authentication must already be configured.
+python3 <kda>/scripts/kernelpilot.py optimize --agent opencode \
+  --model <provider/model> --workspace <operator-repo>
 ```
 
-### Local Codex with a remote GPU executor
+### OpenCode on the S60 host
 
-The remote server does not need Codex. Put the task contract and evidence in a
-small local control workspace, set `execution.transport: ssh`, and declare the
-SSH alias and absolute remote repository path. KernelPilot materializes only
+Use OpenCode directly in an independent FlagAttention worktree when the host can
+run OpenCode and the S60 container is reachable through `docker exec`. This is
+the simplest path for interactive work. See [docs/opencode.md](docs/opencode.md)
+for the exact worktree, device-variable, and measurement commands, and
+[docs/enflame-s60-runbook.md](docs/enflame-s60-runbook.md) for the device rules.
+
+### OpenCode on a controller with a remote S60 executor
+
+The remote GPU server does not need OpenCode. Put the task contract and evidence
+in a small local control workspace, set `execution.transport: ssh`, and declare
+the SSH alias and absolute remote repository path. KernelPilot materializes only
 `constraints.allowed_paths` under `remote-worktree/` and rejects a push when a
 path is not allow-listed or its remote hash changed since pull.
 
 ```bash
 python3 <kda>/scripts/kernelpilot.py remote inspect --workspace <control-workspace>
 python3 <kda>/scripts/kernelpilot.py remote pull    --workspace <control-workspace>
-# Codex edits <control-workspace>/remote-worktree/<allowed-path>
+# The OpenCode agent edits <control-workspace>/remote-worktree/<allowed-path>
 python3 <kda>/scripts/kernelpilot.py remote push    --workspace <control-workspace>
 python3 <kda>/scripts/kernelpilot.py run correctness --workspace <control-workspace>
 python3 <kda>/scripts/kernelpilot.py run benchmark   --workspace <control-workspace>
@@ -142,14 +173,15 @@ python3 <kda>/scripts/kernelpilot.py remote list-wiki --workspace <control-works
 ```
 
 The adapter is the normal execution boundary, not a substitute for operating
-system isolation: the agent instructions and Codex approval policy must also
+system isolation: the agent instructions and agent permission policy must also
 disallow direct `ssh`, `scp`, and `rsync` calls.
 
-`codex exec` is launched with `--sandbox workspace-write`, JSONL event capture,
-and a structured final-output schema. The runner does not bypass the Codex
-sandbox or approval model. See OpenAI's
-[non-interactive mode documentation](https://learn.chatgpt.com/docs/non-interactive-mode)
-for the underlying CLI contract.
+Codex runs with `--sandbox workspace-write`, JSONL event capture, and a
+structured final-output schema. OpenCode runs with `opencode run --format json`
+and the same structured result schema written to a contracted file. OpenCode
+does not provide Codex's filesystem sandbox; KernelPilot still enforces the
+allowlist and forbidden-path hashes and restores the best checkpoint. See
+[docs/opencode.md](docs/opencode.md) for the verified CLI behavior and limits.
 
 ## Submodules
 

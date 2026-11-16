@@ -1,4 +1,4 @@
-# KDA Codex Instructions
+# KDA Agent Instructions
 
 This repository defines a reusable workflow for GPU kernel optimization.
 
@@ -11,8 +11,10 @@ This repository defines a reusable workflow for GPU kernel optimization.
 5. Every optimization attempt is a candidate.
 6. Failed or regressed candidates must be recorded rather than silently discarded.
 7. Keep the task workspace separate from reusable KDA workflow assets.
-8. Keep Codex on the controller when an execution host cannot run it; use the
-   controlled adapter for contracted commands and allow-listed source sync.
+8. Keep the agent on the controller when an execution host cannot run it; use
+   the controlled adapter for contracted commands and allow-listed source sync.
+   KernelPilot supports Codex and OpenCode; select the driver explicitly for a
+   reproducible run.
 9. Do not bypass the configured transport with direct `ssh`, `scp`, or `rsync`.
 10. An evidence-backed run that does not reach its performance target is an
     acceptable outcome. Never fabricate an improvement or hide a failed attempt.
@@ -46,6 +48,21 @@ This repository defines a reusable workflow for GPU kernel optimization.
     A task result alone is not a knowledge card. External evidence pointers and
     hashes are allowed; they support the reusable claim without copying the
     experiment report into the knowledge base. Do not auto-publish run reports.
+
+## Driver notes
+
+Codex and OpenCode share the same task contract, workflow, evidence files, and
+checkpoint gates. Codex receives a JSON output schema; OpenCode is instructed to
+write the same structured result to a contracted file because its CLI has no
+`--output-schema` equivalent. OpenCode does not provide Codex's filesystem
+sandbox, so the task allowlist, forbidden-path hashes, and best-checkpoint
+restore are mandatory rather than advisory. Do not start a nested agent session.
+
+For S60/GCU300 work, also follow
+[docs/enflame-s60-runbook.md](docs/enflame-s60-runbook.md): use only the
+confirmed idle physical device, set `TOPS_VISIBLE_DEVICES` on every launching
+process, and do not infer hardware utilization from the presence of an
+intrinsic or a compiler artifact.
 
 ## Shared-memory and resource policy
 
@@ -94,6 +111,8 @@ For every kernel optimization task:
 | Which skills apply to a chip, architecture, and language | `backends/<id>.yaml` |
 | Local versus execution-only SSH placement | `.kernelpilot/task.yaml` `execution` block |
 | Remote command dispatch and source synchronization | `scripts/controlled_ssh.py` |
+| OpenCode host/controller entry points | `docs/opencode.md` |
+| S60 device, measurement, and TLE rules | `docs/enflame-s60-runbook.md` |
 | "Which candidate is fastest right now" | `runs/candidates.jsonl`, `runs/benchmark.csv` |
 | Which stage the task is currently in | the task workspace, not this repository |
 | Reusable, evidence-scoped Enflame optimization observations | `knowledge/enflame/` (raw task artifacts stay in their workspaces) |

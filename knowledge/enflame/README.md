@@ -54,7 +54,9 @@ rg -n -i 'scatter|bucket|workspace|sdpa' <kda>/knowledge/enflame
 An index match does not declare a profiler available or override backend
 profile/skill routing. It is useful even when no GCU profiler profile exists.
 The generated KernelPilot optimization prompt links this index for GCU tasks,
-including tasks without a matching backend profile.
+including tasks without a matching backend profile. The task-side device,
+measurement, and TLE procedure is
+[../../docs/enflame-s60-runbook.md](../../docs/enflame-s60-runbook.md).
 
 ## Add or revise knowledge
 

@@ -1,8 +1,10 @@
 import importlib.util
 import csv
 import json
+import os
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -37,6 +39,129 @@ def valid_task():
             "forbidden_paths": ["tests"],
         },
     }
+
+
+def prepare_runner_workspace(workspace: Path) -> None:
+    (workspace / "kernel.py").write_text("pass\n", encoding="utf-8")
+    (workspace / "tests").mkdir()
+    (workspace / "tests/frozen.py").write_text("before\n", encoding="utf-8")
+    for directory in ("docs", "runs"):
+        (workspace / directory).mkdir()
+    for relative in (
+        "docs/draft.md",
+        "docs/plan.md",
+        "docs/final-report.md",
+        "runs/workflow-state.json",
+        "runs/stage-events.jsonl",
+    ):
+        (workspace / relative).write_text("{}\n", encoding="utf-8")
+    (workspace / "runs/candidates.jsonl").write_text(
+        json.dumps(
+            {
+                "id": "baseline",
+                "hypothesis": "unmodified baseline",
+                "correctness": "pass",
+                "decision": "keep",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (workspace / "runs/benchmark.csv").write_text(
+        "candidate,shape,metric_value,baseline_value,unit,status\n"
+        "baseline,a,10,10,ms,pass\n",
+        encoding="utf-8",
+    )
+
+
+def write_fake_codex(workspace: Path) -> Path:
+    script = workspace / "fake-codex"
+    script.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import json
+            import sys
+
+            final_path = sys.argv[sys.argv.index("--output-last-message") + 1]
+            print(json.dumps({"type": "thread.started", "thread_id": "thread-fake"}), flush=True)
+            result = {
+                "status": "stopped",
+                "best_candidate": "baseline",
+                "target_reached": False,
+                "correctness": "pass",
+                "summary": "fake codex run",
+                "stop_reason": "no_actionable_bottleneck",
+                "workflow_issues": [],
+                "restored_candidate": "baseline",
+                "rollback_status": "restored_best",
+                "remaining_bottlenecks": [],
+            }
+            with open(final_path, "w", encoding="utf-8") as handle:
+                json.dump(result, handle)
+            print(json.dumps({"type": "turn.completed"}), flush=True)
+            """
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
+
+def write_fake_opencode(workspace: Path) -> Path:
+    script = workspace / "fake-opencode"
+    script.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import json
+            import os
+            import re
+            import sys
+
+            prompt = sys.argv[-1]
+            events = [
+                {"type": "step_start", "sessionID": "ses_fake", "part": {}},
+                {"type": "step_finish", "sessionID": "ses_fake", "part": {"reason": "stop"}},
+            ]
+            if os.environ.get("KDA_FAKE_EVENT_ERROR"):
+                events.insert(1, {"type": "error", "sessionID": "ses_fake", "message": "fake failure"})
+            for event in events:
+                print(json.dumps(event), flush=True)
+
+            result = {
+                "status": "stopped",
+                "best_candidate": "baseline",
+                "target_reached": False,
+                "correctness": "pass",
+                "summary": "fake run",
+                "stop_reason": "no_actionable_bottleneck",
+                "workflow_issues": [],
+                "restored_candidate": "baseline",
+                "rollback_status": "restored_best",
+                "remaining_bottlenecks": [],
+            }
+            text = "completed"
+            if os.environ.get("KDA_FAKE_NO_FINAL"):
+                text = "final result:\\n" + json.dumps(result)
+            if os.environ.get("KDA_FAKE_FORBID"):
+                os.makedirs("tests", exist_ok=True)
+                with open("tests/frozen.py", "w", encoding="utf-8") as handle:
+                    handle.write("changed\\n")
+            print(json.dumps({"type": "text", "sessionID": "ses_fake", "part": {"type": "text", "text": text}}), flush=True)
+            if not os.environ.get("KDA_FAKE_NO_FINAL"):
+                match = re.search(r"(\\S*runs/opencode-final-[0-9]{8}-[0-9]{6}\\.json)", prompt)
+                if not match:
+                    raise SystemExit("final result path missing from prompt")
+                with open(match.group(1), "w", encoding="utf-8") as handle:
+                    json.dump(result, handle)
+            """
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
 
 
 class KernelPilotTests(unittest.TestCase):
@@ -440,6 +565,263 @@ class KernelPilotTests(unittest.TestCase):
             _, errors = kernelpilot.load_final_result(path)
             self.assertTrue(errors)
             self.assertIn("stop_reason", errors[0])
+
+    def test_agent_selection_explicit_and_auto(self):
+        with patch.object(
+            kernelpilot.shutil,
+            "which",
+            side_effect=lambda binary: "/usr/bin/codex" if binary == "codex" else None,
+        ):
+            self.assertEqual(kernelpilot.select_agent("auto")["id"], "codex")
+        with patch.object(kernelpilot.shutil, "which", return_value=None):
+            with patch.dict(os.environ, {"KERNELPILOT_AGENT": "opencode"}):
+                self.assertEqual(kernelpilot.select_agent("auto")["id"], "opencode")
+            with patch.dict(os.environ, {"KERNELPILOT_AGENT": "opencode"}):
+                with self.assertRaises(kernelpilot.ContractError):
+                    kernelpilot.select_agent("auto", require_available=True)
+        self.assertEqual(
+            kernelpilot.select_agent("opencode", agent_bin="/tmp/oc")["binary"],
+            "/tmp/oc",
+        )
+
+    def test_codex_command_shape_is_preserved(self):
+        final_path = Path("/tmp/final.json")
+        command = kernelpilot.build_agent_command(
+            "codex",
+            "codex",
+            "PROMPT",
+            final_path=final_path,
+            task_name="demo",
+        )
+        self.assertEqual(command[:2], ["codex", "exec"])
+        self.assertIn("workspace-write", command)
+        self.assertIn("--output-schema", command)
+        self.assertEqual(command[-2], str(final_path))
+        self.assertEqual(command[-1], "PROMPT")
+
+    def test_opencode_command_uses_verified_noninteractive_flags(self):
+        command = kernelpilot.build_agent_command(
+            "opencode",
+            "opencode",
+            "PROMPT",
+            final_path=Path("/tmp/final.json"),
+            task_name="demo",
+            model="provider/model",
+        )
+        self.assertEqual(command[:3], ["opencode", "run", "--standalone"])
+        self.assertIn("--format", command)
+        self.assertIn("json", command)
+        self.assertIn("--agent", command)
+        self.assertIn("build", command)
+        self.assertIn("--model", command)
+        self.assertIn("provider/model", command)
+        self.assertNotIn("exec", command)
+        self.assertNotIn("--output-schema", command)
+        self.assertEqual(command[-1], "PROMPT")
+
+    def test_agent_event_parsing_keeps_both_driver_formats(self):
+        self.assertEqual(
+            kernelpilot.observe_agent_event(
+                "codex", {"type": "thread.started", "thread_id": "thread-1"}
+            ),
+            ("thread-1", None, None),
+        )
+        self.assertEqual(
+            kernelpilot.observe_agent_event(
+                "opencode",
+                {
+                    "type": "text",
+                    "sessionID": "ses-1",
+                    "part": {"type": "text", "text": "hello"},
+                },
+            ),
+            ("ses-1", None, "hello"),
+        )
+        _, error, _ = kernelpilot.observe_agent_event(
+            "opencode", {"type": "error", "sessionID": "ses-1", "message": "boom"}
+        )
+        self.assertIn("boom", error)
+
+    def test_opencode_final_result_can_fall_back_to_event_text(self):
+        final = {
+            "status": "stopped",
+            "best_candidate": "baseline",
+            "target_reached": False,
+            "correctness": "pass",
+            "summary": "done",
+            "stop_reason": "no_actionable_bottleneck",
+            "workflow_issues": [],
+        }
+        text = "prefix\n```json\n" + json.dumps(final) + "\n```\n"
+        result, errors = kernelpilot.load_final_result(
+            Path("/tmp/missing-final.json"),
+            fallback_text=text,
+            agent_label="opencode",
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(result, final)
+
+    def test_init_opencode_links_kda_skills(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            kernelpilot.init_workspace(workspace, "opencode")
+            config = json.loads(
+                (workspace / ".opencode/opencode.jsonc").read_text(encoding="utf-8")
+            )
+            self.assertEqual(config["skills"], [str(kernelpilot.KDA_ROOT / "skills")])
+            self.assertTrue((workspace / ".kernelpilot/task.yaml").is_file())
+            self.assertTrue((workspace / "AGENTS.md").is_file())
+
+    def test_opencode_prompt_requires_structured_final_file(self):
+        task = valid_task()
+        task["execution"] = {"transport": "ssh", "host": "gpu", "workspace": "/srv/op"}
+        final_path = Path("/controller/runs/opencode-final.json")
+        prompt = kernelpilot.build_prompt(
+            Path("/controller"),
+            task,
+            agent="opencode",
+            final_result_path=final_path,
+        )
+        self.assertIn("OpenCode runs here", prompt)
+        self.assertIn("write one JSON object", prompt)
+        self.assertIn(str(final_path), prompt)
+        self.assertIn("OpenCode does not provide Codex's", prompt)
+        self.assertIn("Never invoke ssh, scp, rsync", prompt)
+
+    def test_codex_runner_path_remains_compatible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            prepare_runner_workspace(workspace)
+            fake = write_fake_codex(workspace)
+            task = valid_task()
+            task["analysis"] = {
+                "tool_discovery": "disabled",
+                "profiling": "disabled",
+            }
+            status = kernelpilot.run_agent(
+                workspace,
+                task,
+                agent="codex",
+                agent_bin=str(fake),
+                sandbox="workspace-write",
+                dry_run=False,
+            )
+            self.assertEqual(status, 0)
+            state = json.loads(
+                (workspace / "runs/kernelpilot-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(state["agent"], "codex")
+            self.assertEqual(state["thread_id"], "thread-fake")
+            self.assertEqual(state["codex_exit_code"], 0)
+            self.assertEqual(state["result_source"], "final_file")
+            self.assertTrue(list((workspace / "runs").glob("codex-events-*.jsonl")))
+
+    def test_opencode_runner_parses_events_and_writes_final_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            prepare_runner_workspace(workspace)
+            fake = write_fake_opencode(workspace)
+            task = valid_task()
+            task["analysis"] = {
+                "tool_discovery": "disabled",
+                "profiling": "disabled",
+            }
+            status = kernelpilot.run_agent(
+                workspace,
+                task,
+                agent="opencode",
+                agent_bin=str(fake),
+                sandbox="workspace-write",
+                dry_run=False,
+                model="provider/model",
+            )
+            self.assertEqual(status, 0)
+            state = json.loads(
+                (workspace / "runs/kernelpilot-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(state["agent"], "opencode")
+            self.assertEqual(state["session_id"], "ses_fake")
+            self.assertEqual(state["result_source"], "final_file")
+            self.assertEqual(state["stage"], "complete")
+            self.assertTrue(list((workspace / "runs").glob("opencode-events-*.jsonl")))
+
+    def test_opencode_runner_fails_on_event_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            prepare_runner_workspace(workspace)
+            fake = write_fake_opencode(workspace)
+            task = valid_task()
+            task["analysis"] = {
+                "tool_discovery": "disabled",
+                "profiling": "disabled",
+            }
+            with patch.dict(os.environ, {"KDA_FAKE_EVENT_ERROR": "1"}):
+                status = kernelpilot.run_agent(
+                    workspace,
+                    task,
+                    agent="opencode",
+                    agent_bin=str(fake),
+                    sandbox="workspace-write",
+                    dry_run=False,
+                )
+            self.assertEqual(status, 1)
+            state = json.loads(
+                (workspace / "runs/kernelpilot-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(state["stage"], "failed")
+            self.assertTrue(state["event_errors"])
+
+    def test_opencode_runner_fails_on_forbidden_path_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            prepare_runner_workspace(workspace)
+            fake = write_fake_opencode(workspace)
+            task = valid_task()
+            task["analysis"] = {
+                "tool_discovery": "disabled",
+                "profiling": "disabled",
+            }
+            with patch.dict(os.environ, {"KDA_FAKE_FORBID": "1"}):
+                status = kernelpilot.run_agent(
+                    workspace,
+                    task,
+                    agent="opencode",
+                    agent_bin=str(fake),
+                    sandbox="workspace-write",
+                    dry_run=False,
+                )
+            self.assertEqual(status, 1)
+            state = json.loads(
+                (workspace / "runs/kernelpilot-state.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("tests/frozen.py", state["forbidden_changes"])
+
+    def test_opencode_runner_recovers_final_result_from_event_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            prepare_runner_workspace(workspace)
+            fake = write_fake_opencode(workspace)
+            task = valid_task()
+            task["analysis"] = {
+                "tool_discovery": "disabled",
+                "profiling": "disabled",
+            }
+            with patch.dict(os.environ, {"KDA_FAKE_NO_FINAL": "1"}):
+                status = kernelpilot.run_agent(
+                    workspace,
+                    task,
+                    agent="opencode",
+                    agent_bin=str(fake),
+                    sandbox="workspace-write",
+                    dry_run=False,
+                )
+            self.assertEqual(status, 0)
+            state = json.loads(
+                (workspace / "runs/kernelpilot-state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(state["result_source"], "event_text")
+            self.assertTrue(list((workspace / "runs").glob("opencode-final-*.json")))
+
 
 
 if __name__ == "__main__":

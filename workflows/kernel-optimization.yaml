@@ -2,7 +2,8 @@
 #
 # This file is read by the agent. KernelPilot automates environment setup,
 # local/SSH dispatch, synchronization, and evidence gates; the agent still owns
-# diagnosis and candidate selection.
+# diagnosis and candidate selection. The same workflow runs under Codex or
+# OpenCode; select the driver with `kernelpilot.py optimize --agent ...`.
 #
 # Principles: ../AGENTS.md
 # Underlying loop: ../docs/agent-flow.md

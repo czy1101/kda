@@ -6,11 +6,11 @@ Kernel Design Agents is a repeatable loop for agent-driven implementation work. 
 
 Keep the reusable workflow separate from the task workspace. This repository explains the flow. The task workspace owns code, tests, datasets, benchmark scripts, private rules, and generated artifacts.
 
-The controller and executor may also be separate. Codex, prompts, workflow
-state, and evidence stay on the controller. A GPU server that cannot run Codex
-is an execution-only host reached through the controlled SSH adapter. The
-adapter runs only task-contracted commands and synchronizes only allow-listed
-implementation files.
+The controller and executor may also be separate. The agent driver (Codex or
+OpenCode), prompts, workflow state, and evidence stay on the controller. A GPU
+server that cannot run either driver is an execution-only host reached through
+the controlled SSH adapter. The adapter runs only task-contracted commands and
+synchronizes only allow-listed implementation files.
 
 MLSys-style benchmark work is one possible application of this loop. The same flow can also be used for compiler passes, runtime kernels, infrastructure changes, or other performance-sensitive tasks.
 

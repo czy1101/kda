@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Minimal, evidence-gated Codex runner for KDA task workspaces."""
+"""Minimal, evidence-gated agent runner for KDA task workspaces.
+
+Codex remains the default for existing setups. OpenCode is selected explicitly
+with ``--agent opencode`` (or through ``KERNELPILOT_AGENT``). The two drivers
+share the task contract, environment setup, evidence gates, path allowlists,
+checkpoint/rollback and benchmark verification; only invocation and event
+parsing differ.
+"""
 
 from __future__ import annotations
 
@@ -37,6 +44,8 @@ from controlled_ssh import (  # noqa: E402
 )
 
 DEFAULT_TASK = Path(".kernelpilot/task.yaml")
+AGENT_CHOICES = ("auto", "codex", "opencode")
+OPENCODE_DEFAULT_AGENT = "build"
 EVIDENCE_DIRS = ("docs", "runs", "outputs", "profile")
 ANALYSIS_CAPABILITIES = Path("runs/analysis-capabilities.json")
 ANALYSIS_STRATEGY = Path("runs/analysis-strategy.json")
@@ -60,6 +69,194 @@ class ContractError(ValueError):
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _agent_binary(
+    agent: str,
+    *,
+    codex_bin: str | None = None,
+    opencode_bin: str | None = None,
+) -> str:
+    if agent == "codex":
+        return codex_bin or os.environ.get("KERNELPILOT_CODEX") or "codex"
+    if agent == "opencode":
+        return opencode_bin or os.environ.get("KERNELPILOT_OPENCODE") or "opencode"
+    raise ContractError(f"unsupported agent: {agent!r}")
+
+
+def _binary_available(binary: str) -> bool:
+    if shutil.which(binary):
+        return True
+    return Path(binary).expanduser().is_file()
+
+
+def select_agent(
+    requested: str = "auto",
+    *,
+    codex_bin: str | None = None,
+    opencode_bin: str | None = None,
+    agent_bin: str | None = None,
+    require_available: bool = False,
+) -> dict[str, Any]:
+    """Resolve the agent driver without silently changing the Codex default.
+
+    ``auto`` honours ``KERNELPILOT_AGENT`` first, then prefers an installed
+    Codex executable and finally an installed OpenCode executable. An explicit
+    selection always wins, which keeps both paths testable and reproducible.
+    """
+    selected = (requested or os.environ.get("KERNELPILOT_AGENT") or "auto").strip().lower()
+    if selected not in AGENT_CHOICES:
+        raise ContractError(
+            f"agent must be one of {', '.join(AGENT_CHOICES)}; got {requested!r}"
+        )
+    if selected == "auto":
+        configured = (os.environ.get("KERNELPILOT_AGENT") or "").strip().lower()
+        if configured in ("codex", "opencode"):
+            selected = configured
+        else:
+            for candidate in ("codex", "opencode"):
+                if _binary_available(
+                    _agent_binary(
+                        candidate,
+                        codex_bin=codex_bin,
+                        opencode_bin=opencode_bin,
+                    )
+                ):
+                    selected = candidate
+                    break
+            else:
+                raise ContractError(
+                    "no supported agent executable found; install codex or opencode, "
+                    "or pass --agent and --agent-bin"
+                )
+    binary = agent_bin or _agent_binary(
+        selected, codex_bin=codex_bin, opencode_bin=opencode_bin
+    )
+    if require_available and not _binary_available(binary):
+        raise ContractError(
+            f"{selected} executable not found: {binary}; install it or pass --agent-bin"
+        )
+    return {"id": selected, "binary": binary}
+
+
+def build_agent_command(
+    agent: str,
+    binary: str,
+    prompt: str,
+    *,
+    final_path: Path,
+    task_name: str,
+    sandbox: str = "workspace-write",
+    model: str | None = None,
+    opencode_agent: str = OPENCODE_DEFAULT_AGENT,
+    auto_approve: bool = False,
+) -> list[str]:
+    """Build the verified non-interactive command for each supported driver."""
+    if agent == "codex":
+        return [
+            binary,
+            "exec",
+            "--sandbox",
+            sandbox,
+            "--json",
+            "--output-schema",
+            str(KDA_ROOT / "schemas/run-result.schema.json"),
+            "--output-last-message",
+            str(final_path),
+            prompt,
+        ]
+    if agent == "opencode":
+        command = [
+            binary,
+            "run",
+            "--standalone",
+            "--format",
+            "json",
+            "--agent",
+            opencode_agent,
+            "--title",
+            f"KDA {task_name}",
+        ]
+        if model:
+            command.extend(["--model", model])
+        if auto_approve:
+            command.append("--auto")
+        command.append(prompt)
+        return command
+    raise ContractError(f"unsupported agent: {agent!r}")
+
+
+def _event_message(event: dict[str, Any]) -> str:
+    for key in ("message", "error", "detail", "reason"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            for nested in ("message", "detail", "reason"):
+                text = value.get(nested)
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+    part = event.get("part")
+    if isinstance(part, dict):
+        for key in ("message", "error", "reason"):
+            value = part.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return str(event.get("type", "agent error"))
+
+
+def observe_agent_event(
+    agent: str, event: dict[str, Any]
+) -> tuple[str | None, str | None, str | None]:
+    """Return ``(session_id, error_message, text_delta)`` for one JSONL event.
+
+    Codex emits ``thread.started`` and ``turn.failed`` records. OpenCode emits
+    the session id on every record and text in ``part.text``. Unknown records
+    are ignored rather than guessed at.
+    """
+    session_id: str | None = None
+    error: str | None = None
+    text: str | None = None
+    event_type = event.get("type")
+    if agent == "codex":
+        if event_type == "thread.started":
+            thread_id = event.get("thread_id")
+            session_id = thread_id if isinstance(thread_id, str) else None
+        if event_type in ("error", "turn.failed"):
+            error = _event_message(event)
+    elif agent == "opencode":
+        raw_session = event.get("sessionID")
+        session_id = raw_session if isinstance(raw_session, str) else None
+        if event_type == "text":
+            part = event.get("part")
+            if isinstance(part, dict):
+                raw_text = part.get("text")
+                text = raw_text if isinstance(raw_text, str) else None
+        if event_type in ("error", "session.error"):
+            error = _event_message(event)
+        part = event.get("part")
+        if isinstance(part, dict) and part.get("reason") in (
+            "error",
+            "cancelled",
+            "aborted",
+        ):
+            error = _event_message(event)
+    return session_id, error, text
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """Find the first complete JSON object that looks like a KDA final result."""
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and "status" in value and "best_candidate" in value:
+            return value
+    return None
 
 
 def _contains_placeholder(value: Any) -> bool:
@@ -1240,12 +1437,25 @@ def verify_evidence(
     return errors
 
 
-def load_final_result(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
+def load_final_result(
+    path: Path,
+    *,
+    fallback_text: str | None = None,
+    agent_label: str = "agent",
+) -> tuple[dict[str, Any] | None, list[str]]:
     if not path.is_file():
-        return None, [f"Codex did not write structured final result: {path}"]
+        if fallback_text:
+            embedded = _extract_json_object(fallback_text)
+            if embedded is not None:
+                return embedded, []
+        return None, [f"{agent_label} did not write structured final result: {path}"]
     try:
         result = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
+        if fallback_text:
+            embedded = _extract_json_object(fallback_text)
+            if embedded is not None:
+                return embedded, []
         return None, [f"invalid structured final result: {error}"]
     required = (
         "status",
@@ -1262,14 +1472,23 @@ def load_final_result(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
     return result, []
 
 
-def build_prompt(workspace: Path, task: dict[str, Any]) -> str:
+def build_prompt(
+    workspace: Path,
+    task: dict[str, Any],
+    *,
+    agent: str = "codex",
+    final_result_path: Path | None = None,
+) -> str:
     driver = KDA_ROOT / "scripts/kernelpilot.py"
     execution = task.get("execution") or {"transport": "local"}
+    agent_label = "OpenCode" if agent == "opencode" else "Codex"
     knowledge_instruction = ""
     if task.get("target", {}).get("backend") == "gcu":
         knowledge_instruction = f"""
 Read the Enflame knowledge index at {KDA_ROOT / 'knowledge/enflame/README.md'}
 and only the cards relevant to this target, language and measured bottleneck.
+Also read the S60 runbook at {KDA_ROOT / 'docs/enflame-s60-runbook.md'} for
+device allocation, staged measurement, A/B, TLE, and knowledge-update rules.
 Record applicable card IDs and environment differences in docs/plan.md.
 Historical observations suggest hypotheses, not current compatibility or
 performance guarantees. Revalidate in the contracted environment; knowledge
@@ -1289,7 +1508,7 @@ only the skills it routes for the current stage.
     remote_instructions = ""
     if execution.get("transport", "local") == "ssh":
         remote_instructions = f"""
-This is a split controller/executor task. Codex runs here; the target runs on
+This is a split controller/executor task. {agent_label} runs here; the target runs on
 {execution['host']}:{execution['workspace']}. Never invoke ssh, scp, rsync, or
 another remote shell directly. Inspect and edit only the local mirror at
 {mirror_root(workspace)}. Synchronize declared implementation paths with:
@@ -1301,12 +1520,37 @@ When TLE is enabled, inspect its remote Wiki only through:
 - list: python3 {driver} remote list-wiki --workspace {workspace}
 - read: python3 {driver} remote read-wiki --workspace {workspace} --path <file-inside-wiki>
 """
+    runtime_instructions = ""
+    if agent == "opencode":
+        runtime_instructions = """
+OpenCode runtime note: this is a non-interactive OpenCode session. Use the
+available tools directly; do not launch an interactive editor and do not start a
+nested `opencode` or `codex` session. OpenCode does not provide Codex's
+filesystem sandbox. The task contract's `constraints.allowed_paths` and
+`constraints.forbidden_paths` remain binding, and KernelPilot hashes forbidden
+paths and restores the best checkpoint after the run.
+"""
+    final_instructions = ""
+    if agent == "opencode":
+        if final_result_path is None:
+            raise ContractError("OpenCode runs require a structured final-result path")
+        final_instructions = f"""
+Before finishing, write one JSON object matching
+{KDA_ROOT / 'schemas/run-result.schema.json'} to {final_result_path}.
+This file is the structured final result; do not only print it in chat.
+"""
+    else:
+        final_instructions = """
+Finish by writing docs/final-report.md and returning the structured run result
+requested by the output schema.
+"""
     return f"""Read the task workspace's AGENTS.md and .kernelpilot/task.yaml, then follow
 the KDA workflow at {KDA_ROOT / 'workflows/kernel-optimization.yaml'} and the
 optimization prompt at {KDA_ROOT / 'prompts/optimize-kernel.md'}.
 {profile_instruction}
 {knowledge_instruction}
 {remote_instructions}
+{runtime_instructions}
 
 Treat the workflow as the execution contract for this complete run. Start from
 its initial stage, select each following stage from the declared transition,
@@ -1329,17 +1573,22 @@ Before editing, create docs/draft.md and docs/plan.md and preserve a rollback
 copy of the implementation. Modify only constraints.allowed_paths. Never modify
 constraints.forbidden_paths. Record every candidate and benchmark result,
 including failures and regressions. Stop only when the target or a configured
-stop condition is reached. Finish by writing docs/final-report.md and returning
-the structured run result requested by the output schema.
+stop condition is reached.
+{final_instructions}
 """
 
 
-def run_codex(
+def run_agent(
     workspace: Path,
     task: dict[str, Any],
-    codex_bin: str,
+    *,
+    agent: str,
+    agent_bin: str,
     sandbox: str,
     dry_run: bool,
+    model: str | None = None,
+    opencode_agent: str = OPENCODE_DEFAULT_AGENT,
+    auto_approve: bool = False,
 ) -> int:
     errors = validate_task(workspace, task)
     if errors:
@@ -1361,26 +1610,32 @@ def run_codex(
     if not dry_run:
         save_checkpoint(workspace, task, "baseline", "baseline")
         save_checkpoint(workspace, task, "best", "baseline")
-    prompt = build_prompt(workspace, task)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    events_path = workspace / "runs" / f"codex-events-{timestamp}.jsonl"
-    final_path = workspace / "runs" / f"codex-final-{timestamp}.json"
+    events_path = workspace / "runs" / f"{agent}-events-{timestamp}.jsonl"
+    final_path = workspace / "runs" / f"{agent}-final-{timestamp}.json"
     state_path = workspace / "runs/kernelpilot-state.json"
-    command = [
-        codex_bin,
-        "exec",
-        "--sandbox",
-        sandbox,
-        "--json",
-        "--output-schema",
-        str(KDA_ROOT / "schemas/run-result.schema.json"),
-        "--output-last-message",
-        str(final_path),
+    prompt = build_prompt(
+        workspace,
+        task,
+        agent=agent,
+        final_result_path=final_path,
+    )
+    command = build_agent_command(
+        agent,
+        agent_bin,
         prompt,
-    ]
-    state = {
+        final_path=final_path,
+        task_name=task.get("task", {}).get("name", "task"),
+        sandbox=sandbox,
+        model=model,
+        opencode_agent=opencode_agent,
+        auto_approve=auto_approve,
+    )
+    state: dict[str, Any] = {
         "stage": "ready" if dry_run else "running",
         "started_at": _utc_now(),
+        "agent": agent,
+        "agent_bin": agent_bin,
         "task": task.get("task", {}).get("name"),
         "workspace": str(workspace),
         "events": str(events_path),
@@ -1389,10 +1644,23 @@ def run_codex(
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
     if dry_run:
-        print(json.dumps({"command": command, "prompt": prompt}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "agent": agent,
+                    "command": command,
+                    "prompt": prompt,
+                    "final_result": str(final_path),
+                },
+                indent=2,
+            )
+        )
         return 0
 
-    thread_id: str | None = None
+    session_id: str | None = None
+    event_errors: list[str] = []
+    text_parts: list[str] = []
+    event_count = 0
     returncode = 1
     restoration: dict[str, Any] | None = None
     restoration_errors: list[str] = []
@@ -1413,8 +1681,19 @@ def run_codex(
                     event = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if event.get("type") == "thread.started":
-                    thread_id = event.get("thread_id")
+                if not isinstance(event, dict):
+                    continue
+                event_count += 1
+                observed_session, event_error, text_delta = observe_agent_event(
+                    agent, event
+                )
+                if observed_session:
+                    session_id = observed_session
+                if event_error:
+                    event_errors.append(event_error)
+                if text_delta:
+                    text_parts.append(text_delta)
+            process.stdout.close()
             returncode = process.wait()
     finally:
         try:
@@ -1422,7 +1701,21 @@ def run_codex(
         except (ContractError, SSHAdapterError, OSError, json.JSONDecodeError) as error:
             restoration_errors.append(f"automatic best-checkpoint restore failed: {error}")
 
-    final_result, final_errors = load_final_result(final_path)
+    fallback_text = "\n".join(text_parts) if agent == "opencode" else None
+    final_result, final_errors = load_final_result(
+        final_path,
+        fallback_text=fallback_text,
+        agent_label=agent,
+    )
+    result_source: str | None = None
+    if final_result is not None:
+        if final_path.is_file():
+            result_source = "final_file"
+        elif fallback_text:
+            final_path.write_text(
+                json.dumps(final_result, indent=2) + "\n", encoding="utf-8"
+            )
+            result_source = "event_text"
     if final_result and restoration:
         reported_best = final_result.get("best_candidate")
         restored_best = restoration.get("candidate")
@@ -1430,8 +1723,12 @@ def run_codex(
             restoration_errors.append(
                 f"final best candidate {reported_best!r} does not match restored checkpoint {restored_best!r}"
             )
+    event_error_messages = [
+        f"{agent} event reported failure: {message}" for message in event_errors
+    ]
     evidence_errors = (
         final_errors
+        + event_error_messages
         + restoration_errors
         + verify_evidence(workspace, task, final_result)
     )
@@ -1442,14 +1739,20 @@ def run_codex(
             if returncode == 0 and not evidence_errors and not forbidden_changes
             else "failed",
             "finished_at": _utc_now(),
-            "codex_exit_code": returncode,
-            "thread_id": thread_id,
+            "agent_exit_code": returncode,
+            "session_id": session_id,
+            "event_count": event_count,
+            "event_errors": event_errors,
+            "result_source": result_source,
             "evidence_errors": evidence_errors,
             "forbidden_changes": forbidden_changes,
             "restoration": restoration,
             "result": final_result,
         }
     )
+    if agent == "codex":
+        state["codex_exit_code"] = returncode
+        state["thread_id"] = session_id
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     if forbidden_changes:
         print(
@@ -1466,7 +1769,25 @@ def run_codex(
     return 0 if state["stage"] == "complete" else 1
 
 
-def init_workspace(workspace: Path) -> None:
+def run_codex(
+    workspace: Path,
+    task: dict[str, Any],
+    codex_bin: str,
+    sandbox: str,
+    dry_run: bool,
+) -> int:
+    """Backward-compatible Codex-only entry point."""
+    return run_agent(
+        workspace,
+        task,
+        agent="codex",
+        agent_bin=codex_bin,
+        sandbox=sandbox,
+        dry_run=dry_run,
+    )
+
+
+def init_workspace(workspace: Path, agent: str = "auto") -> None:
     workspace.mkdir(parents=True, exist_ok=True)
     destination = workspace / ".kernelpilot"
     destination.mkdir(parents=True, exist_ok=True)
@@ -1478,6 +1799,23 @@ def init_workspace(workspace: Path) -> None:
         if target.exists():
             raise ContractError(f"refusing to overwrite existing file: {target}")
         shutil.copyfile(source, target)
+    if agent == "opencode":
+        config_dir = workspace / ".opencode"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / "opencode.jsonc"
+        if config_path.exists():
+            raise ContractError(f"refusing to overwrite existing file: {config_path}")
+        config_path.write_text(
+            json.dumps(
+                {
+                    "$schema": "https://opencode.ai/config.json",
+                    "skills": [str(KDA_ROOT / "skills")],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     print(f"initialized KernelPilot workspace: {workspace}")
 
 
@@ -1491,6 +1829,20 @@ def main(argv: list[str] | None = None) -> int:
 
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("workspace", type=_workspace)
+    init_parser.add_argument(
+        "--agent",
+        choices=AGENT_CHOICES,
+        default="auto",
+        help="Also write OpenCode project config when set to opencode.",
+    )
+
+    prompt_parser = subparsers.add_parser("prompt")
+    prompt_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
+    prompt_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
+    prompt_parser.add_argument(
+        "--agent", choices=("codex", "opencode"), default="opencode"
+    )
+    prompt_parser.add_argument("--final", type=Path)
 
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
@@ -1543,19 +1895,52 @@ def main(argv: list[str] | None = None) -> int:
     optimize_parser.add_argument("--workspace", type=_workspace, default=Path.cwd())
     optimize_parser.add_argument("--task", type=Path, default=DEFAULT_TASK)
     optimize_parser.add_argument(
-        "--codex-bin", default=os.environ.get("KERNELPILOT_CODEX", "codex")
+        "--agent",
+        choices=AGENT_CHOICES,
+        default=os.environ.get("KERNELPILOT_AGENT", "auto"),
+        help="Agent driver. auto prefers Codex, then OpenCode.",
+    )
+    optimize_parser.add_argument(
+        "--agent-bin",
+        help="Explicit executable for the selected agent.",
+    )
+    optimize_parser.add_argument(
+        "--codex-bin",
+        default=os.environ.get("KERNELPILOT_CODEX", "codex"),
+        help="Codex executable (kept for existing scripts).",
+    )
+    optimize_parser.add_argument(
+        "--opencode-bin",
+        default=os.environ.get("KERNELPILOT_OPENCODE", "opencode"),
+        help="OpenCode executable.",
+    )
+    optimize_parser.add_argument(
+        "--model",
+        default=os.environ.get("KERNELPILOT_OPENCODE_MODEL"),
+        help="OpenCode model in provider/model form.",
+    )
+    optimize_parser.add_argument(
+        "--opencode-agent",
+        default=os.environ.get("KERNELPILOT_OPENCODE_AGENT", OPENCODE_DEFAULT_AGENT),
+        help="OpenCode primary agent name (default: build).",
+    )
+    optimize_parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="Pass --auto to OpenCode. Prefer narrow permission rules instead.",
     )
     optimize_parser.add_argument(
         "--sandbox",
         choices=("workspace-write", "read-only"),
         default="workspace-write",
+        help="Codex sandbox mode; ignored by OpenCode.",
     )
     optimize_parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
-            init_workspace(args.workspace)
+            init_workspace(args.workspace, args.agent)
             return 0
         if args.command == "verify":
             _, task = load_task(args.workspace, DEFAULT_TASK)
@@ -1566,6 +1951,24 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         _, task = load_task(args.workspace, args.task)
+        if args.command == "prompt":
+            final_path = args.final
+            if final_path is None:
+                final_path = (
+                    args.workspace
+                    / "runs"
+                    / f"{args.agent}-final-manual.json"
+                )
+            elif not final_path.is_absolute():
+                final_path = args.workspace / final_path
+            prompt = build_prompt(
+                args.workspace,
+                task,
+                agent=args.agent,
+                final_result_path=final_path,
+            )
+            print(prompt, end="" if prompt.endswith("\n") else "\n")
+            return 0
         if args.command == "strategy":
             errors = validate_task(args.workspace, task)
             if errors:
@@ -1653,12 +2056,25 @@ def main(argv: list[str] | None = None) -> int:
                 )
             return result.returncode
         if args.command == "optimize":
-            return run_codex(
+            selection = select_agent(
+                args.agent,
+                codex_bin=args.codex_bin,
+                opencode_bin=args.opencode_bin,
+                agent_bin=args.agent_bin,
+                require_available=not args.dry_run,
+            )
+            if args.model and selection["id"] != "opencode":
+                raise ContractError("--model is only supported for OpenCode")
+            return run_agent(
                 args.workspace,
                 task,
-                args.codex_bin,
-                args.sandbox,
-                args.dry_run,
+                agent=selection["id"],
+                agent_bin=selection["binary"],
+                sandbox=args.sandbox,
+                dry_run=args.dry_run,
+                model=args.model,
+                opencode_agent=args.opencode_agent,
+                auto_approve=args.auto_approve,
             )
     except (ContractError, SSHAdapterError, OSError, yaml.YAMLError) as error:
         print(f"kernelpilot: {error}", file=sys.stderr)

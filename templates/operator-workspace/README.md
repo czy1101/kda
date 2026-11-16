@@ -18,9 +18,12 @@ Start the session from the operator repository:
 ```bash
 cd <operator-repo>
 codex
+# or:
+opencode
 ```
 
-and give the agent the prompt from `<kda>/prompts/optimize-kernel.md`.
+and give the agent the prompt from `<kda>/prompts/optimize-kernel.md`, or let
+KernelPilot generate it with `kernelpilot.py prompt --agent opencode`.
 
 Expected layout after the first rounds:
 
@@ -29,6 +32,8 @@ Expected layout after the first rounds:
   AGENTS.md
   .kernelpilot/
     task.yaml
+  .opencode/
+    opencode.jsonc     # optional, written by `init --agent opencode`
   docs/
     analysis.md        # optional, from prompts/analyze-kernel.md
     draft.md

@@ -9,6 +9,16 @@ Use its declared transition for each observed stage result. If a transition,
 action, tool, or required artifact cannot be completed, record the deviation
 and recovery in `runs/stage-events.jsonl` and the final report.
 
+## Driver contract
+
+This prompt is driver-neutral; KernelPilot may launch Codex or OpenCode. Codex
+returns the structured result through its output schema. OpenCode must write the
+same JSON object to the final-result path named in the generated prompt, even
+when the run stops without a performance win. Do not start a nested `codex` or
+`opencode` session. OpenCode has no Codex-style filesystem sandbox, so
+`constraints.allowed_paths` and `constraints.forbidden_paths` are binding
+without exception.
+
 ## Execution and safety
 
 - Use KernelPilot wrappers for environment preflight, tool discovery, baseline,
@@ -65,10 +75,11 @@ one of `goal.relative_to_baseline` and `goal.target_value` defines success, and
 ## Backend and performance analysis
 
 For GCU tasks, read KDA `knowledge/enflame/README.md` and only relevant cards.
-Record card IDs, environment differences and the resulting falsifiable
-hypothesis in `docs/plan.md`. This applies even without a matching backend
-profile. The knowledge index is a reference, not a profiler/skill declaration;
-historical results require fresh validation and do not expand task permissions.
+Also read KDA `docs/enflame-s60-runbook.md`. Record card IDs, environment
+differences and the resulting falsifiable hypothesis in `docs/plan.md`. This
+applies even without a matching backend profile. The knowledge index is a
+reference, not a profiler/skill declaration; historical results require fresh
+validation and do not expand task permissions.
 In the final report, record confirming or contrary evidence for reused cards.
 When new reusable Enflame mechanisms, paths or failure modes emerge, update
 the knowledge cards, catalog and source pointers with their evidence and
@@ -100,6 +111,27 @@ tools whose live probe succeeded, and preserve their versions and failures in
   directly and record the fallback and confidence.
 - Never install, upgrade, reconfigure, or elevate permissions for a profiler
   unless the task separately authorizes that system change.
+
+## S60 execution rules
+
+For Enflame S60/GCU300 tasks, `docs/enflame-s60-runbook.md` is binding:
+
+- Use only a confirmed idle physical card 6 or 7. Set
+  `TOPS_VISIBLE_DEVICES=<actual-card>` on every process that can launch device
+  work. For non-interactive `docker exec`, repeat `-e TOPS_VISIBLE_DEVICES=...`
+  and `-w <workspace>` on every invocation; do not rely on a prior shell.
+- Fix semantics, shape, dtype, layout, device, correctness threshold, baseline,
+  measurement scope, and rollback condition before editing.
+- Measure the full operator, preprocessing, and hotspot in stages before making
+  one falsifiable hypothesis. Keep source, compiler IR, intrinsic, final
+  instruction, and hardware-counter evidence distinct. An emitted intrinsic does
+  not prove unit utilization or a speedup.
+- Run correctness first. Compare A/B on the same card, input, layout, warmup,
+  and timed region. Save raw samples, spread, compilation configuration, and
+  failed candidates. Re-run the required shape set before promotion.
+- TLE stays disabled unless the task enables it. Verify the installed Wiki,
+  API probe, minimal compilation, and correctness before using it on a hotspot.
+  Missing counters do not prove a TLE gap.
 
 ## TLE
 

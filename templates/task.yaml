@@ -24,9 +24,9 @@ target:
   profile: <backend-profile-id>     # optional; omit for unique automatic match
   language: <triton|cuda|tilelang|...>
 
-# Codex remains on the controller. For a GPU server that cannot run Codex,
-# choose ssh and point at the remote operator repository. Omit this block, or
-# use transport: local, when the operator repository is local.
+# The agent remains on the controller. For a GPU server that cannot run Codex
+# or OpenCode, choose ssh and point at the remote operator repository. Omit this
+# block, or use transport: local, when the operator repository is local.
 execution:
   transport: ssh
   host: <ssh-config-host>            # e.g. baai

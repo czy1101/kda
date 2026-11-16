@@ -27,6 +27,20 @@ The templates are intentionally task-agnostic. Fill in the task objective, const
    the plan; use the narrower prompts only for a deliberately separate analysis,
    profiling, or final-review session.
 
+For OpenCode, generate the filled prompt and run it non-interactively:
+
+```bash
+python3 <kda>/scripts/kernelpilot.py prompt --agent opencode \
+  --workspace <task-workspace> > /tmp/kda-opencode-prompt.txt
+opencode run --standalone --format json --agent build \
+  --model <provider/model> "$(cat /tmp/kda-opencode-prompt.txt)"
+```
+
+The generated prompt names the structured final-result file. A manually driven
+session must write that file; do not rely on the chat transcript alone. The
+`optimize --agent opencode` wrapper already performs this step and the evidence
+gates.
+
 The prompts stay thin on purpose: they trigger a task. The method lives in the
 workflow and the Skills, and the task-specific facts live in `.kernelpilot/task.yaml`.
 

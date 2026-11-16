@@ -64,7 +64,7 @@ properties:
   execution:
     type: object
     additionalProperties: false
-    description: Where contracted commands run. Codex always stays on the controller.
+    description: Where contracted commands run. The agent stays on the controller.
     required: [transport]
     properties:
       transport:

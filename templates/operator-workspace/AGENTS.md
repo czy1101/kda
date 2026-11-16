@@ -20,7 +20,7 @@ Use the same runner for an optional separate baseline command. Save a correct,
 improved candidate with `checkpoint save-best`; KernelPilot restores that
 checkpoint when the optimization process exits.
 
-When `execution.transport` is `ssh`, Codex remains on the controller. Never
+When `execution.transport` is `ssh`, the agent remains on the controller. Never
 invoke `ssh`, `scp`, or `rsync` directly. Use `kernelpilot.py remote pull` to
 materialize allow-listed files under `remote-worktree/`, edit that mirror, and
 use `kernelpilot.py remote push` to deploy. The adapter checks both the path

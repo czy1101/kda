@@ -88,6 +88,10 @@ python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   skills/<name>
 ```
 
+For OpenCode, add this repository's `skills/` directory to the task workspace's
+`skills` configuration (see [opencode.md](opencode.md)); the validator path above
+is Codex-specific.
+
 ## Selection rule
 
 When `target.profile` is omitted, KernelPilot selects a profile only if exactly
