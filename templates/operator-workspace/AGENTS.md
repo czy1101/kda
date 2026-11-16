@@ -31,8 +31,21 @@ When `target.profile` is set, read the matching file under KDA `backends/` and
 load only the skills routed for the current stage.
 
 If `target.profile` is omitted, use the unique matching backend profile. Do not
-guess when several profiles match; continue without vendor-specific guidance
-when none matches.
+guess when several profiles match; continue without profile-routed skills when
+none matches. Applicable local knowledge cards remain reference material.
+
+For GCU tasks, also consult `<kda>/knowledge/enflame/README.md` and relevant
+knowledge cards, including when no profiler profile matches. Record applicable
+card IDs and current-environment differences in `docs/plan.md`. Use them to
+form hypotheses, then revalidate with the normal correctness/benchmark gates.
+Knowledge does not declare a tool available or authorize extra source changes.
+Record new reusable Enflame mechanisms and failures in the KDA knowledge base
+with evidence, scope and catalog/source updates. If repository writes are
+unavailable, leave a proposed update in task docs and report it. Keep tests,
+benchmarks and other frozen task files unchanged.
+Only generalizable mechanisms, interfaces and bounded backend limitations may
+enter that knowledge base. Keep this task's winners, tuned constants, shapes,
+timings and candidate history here; link evidence instead of publishing reports.
 
 Before selecting a performance-analysis tool, run KernelPilot `discover-tools`
 in the contracted environment and preserve `runs/analysis-capabilities.json`.
@@ -56,6 +69,20 @@ reconfigure a missing tool as part of the optimization run.
 10. Do not hard-code benchmark shapes or values. Shape-dependent optimization
     needs an algorithmic justification, task authorization, and generalization
     evidence when configured.
+
+## Shared-memory and resource policy
+
+Before implementing a candidate, read
+`<kda>/docs/shared-memory-and-resource-policy.md` in the resolved KDA repository.
+Reject explicit empty shared-memory allocation followed by stores/copies,
+including dummy initialization, and independent register-prefix/shared-memory
+budget tuning or standalone register caps. Permit documented interfaces taking
+actual data to construct/copy shared storage, compiler-managed staging, and
+normal algorithmic tile/warp/stage tuning. Check the full data flow, not just
+parameter names; passing tests or a speedup does not waive this user convention.
+If no permitted API exists, use an allowed ordinary path or report the missing
+capability under the task policy. Restore only a compliant correct checkpoint;
+report when none exists and preserve frozen files and historical evidence.
 
 ## Loop
 

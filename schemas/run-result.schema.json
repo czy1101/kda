@@ -10,7 +10,10 @@
     "correctness",
     "summary",
     "stop_reason",
-    "workflow_issues"
+    "workflow_issues",
+    "restored_candidate",
+    "rollback_status",
+    "remaining_bottlenecks"
   ],
   "properties": {
     "status": {"enum": ["complete", "stopped", "blocked"]},

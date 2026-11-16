@@ -1265,6 +1265,20 @@ def load_final_result(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
 def build_prompt(workspace: Path, task: dict[str, Any]) -> str:
     driver = KDA_ROOT / "scripts/kernelpilot.py"
     execution = task.get("execution") or {"transport": "local"}
+    knowledge_instruction = ""
+    if task.get("target", {}).get("backend") == "gcu":
+        knowledge_instruction = f"""
+Read the Enflame knowledge index at {KDA_ROOT / 'knowledge/enflame/README.md'}
+and only the cards relevant to this target, language and measured bottleneck.
+Record applicable card IDs and environment differences in docs/plan.md.
+Historical observations suggest hypotheses, not current compatibility or
+performance guarantees. Revalidate in the contracted environment; knowledge
+does not override tool discovery, skill routing, constraints or evidence gates.
+Record new reusable Enflame mechanisms or failures in the knowledge cards,
+catalog and source pointers with evidence and limits; mention updates in the
+final report. If repository writes are unavailable, leave a proposed update
+in task docs without changing frozen task files or bypassing permissions.
+"""
     profile_id = (_backend_profile(task) or {}).get("id")
     profile_instruction = ""
     if profile_id:
@@ -1291,6 +1305,7 @@ When TLE is enabled, inspect its remote Wiki only through:
 the KDA workflow at {KDA_ROOT / 'workflows/kernel-optimization.yaml'} and the
 optimization prompt at {KDA_ROOT / 'prompts/optimize-kernel.md'}.
 {profile_instruction}
+{knowledge_instruction}
 {remote_instructions}
 
 Treat the workflow as the execution contract for this complete run. Start from
@@ -1624,9 +1639,18 @@ def main(argv: list[str] | None = None) -> int:
                 args.workspace,
                 task,
                 args.section,
+                capture=True,
                 tool=args.tool,
                 variant=args.variant,
             )
+            if result.stdout:
+                print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+            if result.stderr:
+                print(
+                    result.stderr,
+                    end="" if result.stderr.endswith("\n") else "\n",
+                    file=sys.stderr,
+                )
             return result.returncode
         if args.command == "optimize":
             return run_codex(

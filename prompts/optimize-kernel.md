@@ -26,6 +26,20 @@ and recovery in `runs/stage-events.jsonl` and the final report.
   values, or public test cases. Shape-dependent logic needs task authorization,
   an algorithmic reason, and configured generalization evidence.
 
+## Shared-memory and resource policy
+
+Before implementing a candidate, read
+`<kda>/docs/shared-memory-and-resource-policy.md` in the resolved KDA repository.
+Reject explicit empty shared-memory allocation followed by stores/copies,
+including dummy initialization, and independent register-prefix/shared-memory
+budget tuning or standalone register caps. Permit documented interfaces taking
+actual data to construct/copy shared storage, compiler-managed staging, and
+normal algorithmic tile/warp/stage tuning. Check the full data flow, not just
+parameter names; passing tests or a speedup does not waive this user convention.
+If no permitted API exists, use an allowed ordinary path or report the missing
+capability under the task policy. Restore only a compliant correct checkpoint;
+report when none exists and preserve frozen files and historical evidence.
+
 ## Candidate loop
 
 1. Inspect the operator and reference, then write `docs/draft.md` and
@@ -50,10 +64,22 @@ one of `goal.relative_to_baseline` and `goal.target_value` defines success, and
 
 ## Backend and performance analysis
 
+For GCU tasks, read KDA `knowledge/enflame/README.md` and only relevant cards.
+Record card IDs, environment differences and the resulting falsifiable
+hypothesis in `docs/plan.md`. This applies even without a matching backend
+profile. The knowledge index is a reference, not a profiler/skill declaration;
+historical results require fresh validation and do not expand task permissions.
+In the final report, record confirming or contrary evidence for reused cards.
+When new reusable Enflame mechanisms, paths or failure modes emerge, update
+the knowledge cards, catalog and source pointers with their evidence and
+limits. Keep raw artifacts in the task workspace and report the update.
+If repository write access is unavailable, preserve a proposed update in task
+docs; knowledge maintenance does not permit changes to frozen task files.
+
 If `target.profile` is present, validate and use it. Otherwise use the unique
 backend profile matching the declared backend/device/architecture/language. Do
-not guess when multiple profiles match; continue without vendor-specific
-guidance when none matches.
+not guess when multiple profiles match; continue without profile-routed skills
+when none matches. Applicable local knowledge cards remain reference material.
 
 Run backend tool discovery in the exact task environment. A backend declaration
 is a probe allowlist, not proof that a tool is installed or usable. Select only

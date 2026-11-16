@@ -142,6 +142,7 @@ class ControlledSSH:
         target = shlex.quote(relative)
         result = self.run_script(
             f"set -euo pipefail\ncd -- {workspace}\ncat -- {target}",
+            input_bytes=b"",
             capture=True,
         )
         if result.returncode != 0:
@@ -173,7 +174,7 @@ class ControlledSSH:
             (
                 "set -euo pipefail",
                 f"cd -- {workspace}",
-                f"test -d -- {parent}",
+                f"test -d {parent}",
                 "tmp=$(mktemp .kernelpilot-upload.XXXXXX)",
                 "trap 'rm -f -- \"$tmp\"' EXIT",
                 "cat > \"$tmp\"",
@@ -279,7 +280,7 @@ def list_tle_wiki(task: dict[str, Any], ssh_bin: str = "ssh") -> list[str]:
     script = (
         "set -euo pipefail\n"
         f"cd -- {workspace}\n"
-        f"test -d -- {quoted_root}\n"
+        f"test -d {quoted_root}\n"
         f"find -P -- {quoted_root} -type f -print"
     )
     result = adapter.run_script(script, capture=True)
@@ -312,7 +313,7 @@ def read_tle_wiki(task: dict[str, Any], relative: str, ssh_bin: str = "ssh") -> 
             f"root_real=$(realpath -- {quoted_root})",
             f"target_real=$(realpath -- {quoted_target})",
             'case "$target_real" in "$root_real"/*) ;; *) exit 13 ;; esac',
-            'test -f -- "$target_real"',
+            'test -f "$target_real"',
             'cat -- "$target_real"',
         )
     )

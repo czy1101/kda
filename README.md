@@ -25,6 +25,7 @@ This repository documents an early research prototype and remains under active d
 | `docs/evidence-format.md` | Canonical benchmark and candidate ledger format. |
 | `docs/backend-extensions.md` | How to add a chip backend without growing prompts. |
 | `backends/` | Backend/architecture matching and stage-specific skill routing. |
+| `knowledge/` | Evidence-scoped optimization reference, including Enflame S60/GCU300 compiler paths and Torch mechanisms. |
 | `templates/task.yaml` | Fill-in task contract. |
 | `templates/operator-workspace/` | Files to drop into an operator repository. |
 | `scripts/kernelpilot.py` | Minimal task validator, environment-aware command runner, and Codex driver. |

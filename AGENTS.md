@@ -28,6 +28,34 @@ This repository defines a reusable workflow for GPU kernel optimization.
     checkpoint. KernelPilot restores that checkpoint when the run exits.
 15. Keep metric handling generic: the task's metric, direction, unit, comparator,
     aggregation, and target mode define promotion.
+16. For GCU tasks, consult `knowledge/enflame/README.md` and relevant cards
+    before choosing a candidate, even without a matching profiler profile.
+    Record card IDs and applicability in the task plan. Revalidate historical
+    observations; knowledge never overrides task constraints or evidence gates.
+17. Maintain the Enflame knowledge base when optimization reveals a new
+    reusable mechanism, path, limitation or instructive failure. Update cards,
+    catalog and evidence pointers; distinguish observations from hypotheses
+    and report the update. Preserve raw artifacts in the task workspace. If
+    repository writes are unavailable, leave a proposed update in task docs;
+    do not bypass permissions or modify frozen tests/benchmarks.
+18. Admit only generalizable knowledge: a reusable mechanism, interface,
+    applicability condition, or evidence-backed backend limitation. State its
+    version/layout/semantic boundaries; generalizable does not mean valid on
+    every device. Keep operator-specific winners, tuned constants, shape
+    tables, timings, candidate ledgers and run narratives in the task workspace.
+    A task result alone is not a knowledge card. External evidence pointers and
+    hashes are allowed; they support the reusable claim without copying the
+    experiment report into the knowledge base. Do not auto-publish run reports.
+
+## Shared-memory and resource policy
+
+Apply the user's [shared-memory and resource policy](docs/shared-memory-and-resource-policy.md).
+Do not explicitly allocate empty shared memory and fill it later, or tune
+independent register-prefix/shared-memory budgets or standalone register caps.
+Use documented interfaces initialized from actual algorithm data or compiler-
+managed storage. Normal algorithmic tile/warp/stage tuning remains permitted.
+Review this before implementing a candidate; speed or correctness does not
+waive the convention. Preserve task permissions and historical evidence.
 
 ## Optimization loop
 
@@ -68,6 +96,7 @@ For every kernel optimization task:
 | Remote command dispatch and source synchronization | `scripts/controlled_ssh.py` |
 | "Which candidate is fastest right now" | `runs/candidates.jsonl`, `runs/benchmark.csv` |
 | Which stage the task is currently in | the task workspace, not this repository |
+| Reusable, evidence-scoped Enflame optimization observations | `knowledge/enflame/` (raw task artifacts stay in their workspaces) |
 
 The reusable loop is defined here; task-specific prompts, harnesses, and results
 stay in the task workspace. See [docs/agent-flow.md](docs/agent-flow.md) for the
