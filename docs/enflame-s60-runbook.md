@@ -180,9 +180,11 @@ execution:
 environment:
   shell: bash
   setup: |
+    # Only needed when the contracted commands run inside the container.
+    # Host-side docker exec commands must still pass -e on every invocation.
     export TOPS_VISIBLE_DEVICES=6
   preflight:
-    command: python -c "import torch; print(torch.gcu.device_count())"
+    command: docker exec -e TOPS_VISIBLE_DEVICES=6 -w /workspace/hjq/FlagAttention-<operator> hjq-flagattention bash -lc 'python -c "import torch; print(torch.gcu.device_count())"'
     expect_stdout_contains: "1"
 
 implementation:
