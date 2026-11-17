@@ -3036,6 +3036,41 @@
       "sha256": "85e8b572428801f01bd091d2cd5f0d6149656a9741c46cef2a075296c8d879b7",
       "bytes": 237,
       "available_on_review": true
+    },
+    {
+      "id": "gla-r2-benchmark-ledger",
+      "path": "../../../FlagAttention-gla-kda/runs/benchmark.csv",
+      "sha256": "3e537b40311a066e9d14cc3d9670d7a6862857924c60f3083ab44728513dbfeb",
+      "bytes": 3683,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-candidate-ledger",
+      "path": "../../../FlagAttention-gla-kda/runs/candidates.jsonl",
+      "sha256": "68ab41c965386406f4e5de62c65c53b5210a8df633fc601c1a0d568e3af2583c",
+      "bytes": 12774,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-final-report",
+      "path": "../../../FlagAttention-gla-kda/docs/final-report.md",
+      "sha256": "9eee51827b0fc3814a43a9f4bb9d943d78fe131cb1c1390e9a63a851f67216b4",
+      "bytes": 22566,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-profile-baseline",
+      "path": "../../../FlagAttention-gla-kda/runs/profile-baseline.json",
+      "sha256": "9559d9e8dd797091e2c919762df3688d60cd1e014f5ed1ad591aa01ed4660cb1",
+      "bytes": 2644,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-profile-final",
+      "path": "../../../FlagAttention-gla-kda/runs/profile-final.json",
+      "sha256": "2c284fae75e41c0375ee735daa4fb9a871e3758fbeb838f6c09a6501b4d93b19",
+      "bytes": 2538,
+      "available_on_review": true
     }
   ]
 }

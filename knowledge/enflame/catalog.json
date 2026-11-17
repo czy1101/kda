@@ -1032,6 +1032,36 @@
         "attnres-followup-capacity-guards",
         "attnres-followup-capacity-source"
       ]
+    },
+    {
+      "id": "S60-TRITON-013",
+      "path": "triton-operand-preparation.md",
+      "languages": [
+        "triton"
+      ],
+      "keywords": [
+        "redundant mask",
+        "tl.where",
+        "producer masked",
+        "operand preparation",
+        "strided block pointer",
+        "key-major load",
+        "in-kernel transpose",
+        "tl.trans",
+        "BF16 cast",
+        "packed head stride",
+        "narrow segments",
+        "transfer shape"
+      ],
+      "status": "performance-observed",
+      "summary": "Two operand-preparation costs with identical arithmetic: a consumer-side mask that repeats the producer's zeros, and key-major narrow-segment reads that a time-major contiguous load plus in-kernel transpose replaces.",
+      "sources": [
+        "gla-r2-benchmark-ledger",
+        "gla-r2-candidate-ledger",
+        "gla-r2-final-report",
+        "gla-r2-profile-baseline",
+        "gla-r2-profile-final"
+      ]
     }
   ]
 }
