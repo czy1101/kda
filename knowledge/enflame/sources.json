@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewed_on": "2026-10-27",
+  "reviewed_on": "2026-11-19",
   "path_base": "directory containing this manifest",
   "note": "External local evidence pointers only; not bundled or guaranteed available on another machine. Hashes pin the reviewed artifacts, not current task compatibility.",
   "sources": [
@@ -3070,6 +3070,62 @@
       "path": "../../../FlagAttention-gla-kda/runs/profile-final.json",
       "sha256": "2c284fae75e41c0375ee735daa4fb9a871e3758fbeb838f6c09a6501b4d93b19",
       "bytes": 2538,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-report",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/docs/final-report.md",
+      "sha256": "64b9b64aaa43c6f6754d581c618049a38591a260a5eefde38a43e5066c13905f",
+      "bytes": 16489,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-manifest",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/versions/manifest.json",
+      "sha256": "25512d30a6e8ef11c70510c32b0e6f7bbe28b1668299719a4e2e1265f20eb5ba",
+      "bytes": 2445,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-ab-summary",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/attribution/ab/summary.json",
+      "sha256": "0798f197489596ab8a8e3b060adcc8b2c386622a077f1b1f5c54b4c202bc90ea",
+      "bytes": 2131,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-profile-summary",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/attribution/profile/summary.json",
+      "sha256": "d3c9901f2714925f845ef95fb7e7de06fb8f360bdaabaac3e7ef0bba6e4a5552",
+      "bytes": 43578,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-correctness",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/attribution/correctness/summary.json",
+      "sha256": "2a6804f5eba4a9ea69c386c2aa8658df99c2a31b979278657aab8fe4879fe5d3",
+      "bytes": 14592,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-repo-benchmark",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/attribution/repo-benchmark/summary.json",
+      "sha256": "86b13defa2af61f978b351b5081c366a15635f51f60e8dbec7edb10bcfc61b13",
+      "bytes": 1315,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-candidates",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/candidates.jsonl",
+      "sha256": "f8279149e2fa7c5a79ddc882a8c5d98f53feaa082a504b76dfc006cef9809f01",
+      "bytes": 8678,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-benchmark",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/benchmark.csv",
+      "sha256": "abbdeb263bd2bdc00fc0e29e0b54cce6a553ab23fd6958c2fe341474af2792d1",
+      "bytes": 681,
       "available_on_review": true
     }
   ]

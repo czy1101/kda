@@ -77,6 +77,16 @@ consistent with [S60-TRITON-002](triton-compute-memory-paths.md)'s guidance that
 source-level load spelling and added transfers need not change generated code or
 the critical path.
 
+Single-point replay from `e001aea` (2026-11-19, four alternating pairs)
+isolated both patterns: the producer-aware mask skip alone lowered the full call
+by 2.30% (median; geomean 0.97755) and the output kernel by 9.38%; at a fixed
+BK=128/BV=128 configuration the full-call gain was 1.86%, so about 0.4
+percentage points of the deployed effect came from the autotuner switching the
+output kernel from BK=128 to 256 after the mask was removed. The time-major
+`k`/`gk` load plus in-kernel transpose alone lowered the full call by 3.66%
+(geomean 0.96306) and the local-state kernel by 14.75%, with `shared` dropping
+from 65536 to 32768.
+
 ## Mechanism and candidate hypothesis
 
 Hypothesis for (1): the mask forces the loaded operand to be materialized as a
@@ -128,9 +138,18 @@ contracted call with alternating A/B rounds and retain raw samples.
 - No utilization, bandwidth or overlap claim is made; the device's DRAM counters
   are known-unavailable per [S60-EVIDENCE-002](efsmi-gpm-monitor.md).
 
+- Removing an operand-preparation cost can change the autotuner's selected
+  configuration (here the output kernel moved from BK=128 to 256). Report the
+  deployed auto-config delta and a fixed-config control; only the fixed-config
+  delta isolates the semantic change. In this operator the config switch was
+  worth about 0.4 percentage points, inside the four-pair batch volatility.
+
 ## Sources
 
 - `gla-r2-benchmark-ledger`, `gla-r2-candidate-ledger`, `gla-r2-final-report`,
   `gla-r2-profile-baseline`, `gla-r2-profile-final` in sources.json.
+- `gla-r2-attr-report`, `gla-r2-attr-manifest`, `gla-r2-attr-ab-summary`,
+  `gla-r2-attr-profile-summary` in sources.json (2026-11-19 single-point
+  attribution replay from `e001aea`).
 - Prior contrary/neutral evidence: [S60-TRITON-002](triton-compute-memory-paths.md)
   (async spelling, prefetch and transfer-count neutrality).

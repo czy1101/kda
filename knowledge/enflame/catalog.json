@@ -1034,6 +1034,39 @@
       ]
     },
     {
+      "id": "S60-TRITON-012",
+      "path": "triton-per-program-cost.md",
+      "languages": [
+        "triton"
+      ],
+      "keywords": [
+        "per-program cost",
+        "program count",
+        "launch geometry",
+        "chunk batching",
+        "small tiles",
+        "amortization",
+        "DTE wait",
+        "execution group",
+        "num_warps",
+        "fixed cost",
+        "grid shape"
+      ],
+      "status": "performance-observed",
+      "summary": "Grid-program count can dominate small-tile kernels; batching consecutive work items per program amortizes a fixed per-program cost, but the effect is context-dependent: it helped the small-tile intra-A kernel (2.05% full call) and did not help an output kernel already dominated by two dots and five transfers (0.61% isolated regression).",
+      "sources": [
+        "gla-r2-benchmark-ledger",
+        "gla-r2-candidate-ledger",
+        "gla-r2-final-report",
+        "gla-r2-profile-baseline",
+        "gla-r2-profile-final",
+        "gla-r2-attr-report",
+        "gla-r2-attr-manifest",
+        "gla-r2-attr-ab-summary",
+        "gla-r2-attr-profile-summary"
+      ]
+    },
+    {
       "id": "S60-TRITON-013",
       "path": "triton-operand-preparation.md",
       "languages": [
@@ -1054,13 +1087,17 @@
         "transfer shape"
       ],
       "status": "performance-observed",
-      "summary": "Two operand-preparation costs with identical arithmetic: a consumer-side mask that repeats the producer's zeros, and key-major narrow-segment reads that a time-major contiguous load plus in-kernel transpose replaces.",
+      "summary": "Two operand-preparation costs with identical arithmetic: a consumer-side mask that repeats the producer's zeros, and key-major narrow-segment reads that a time-major contiguous load plus in-kernel transpose replaces. Removing the mask can also change the autotuner's selected BK, so auto and fixed-config controls must be reported separately.",
       "sources": [
         "gla-r2-benchmark-ledger",
         "gla-r2-candidate-ledger",
         "gla-r2-final-report",
         "gla-r2-profile-baseline",
-        "gla-r2-profile-final"
+        "gla-r2-profile-final",
+        "gla-r2-attr-report",
+        "gla-r2-attr-manifest",
+        "gla-r2-attr-ab-summary",
+        "gla-r2-attr-profile-summary"
       ]
     }
   ]

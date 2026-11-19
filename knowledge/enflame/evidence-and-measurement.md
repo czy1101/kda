@@ -109,3 +109,22 @@ medians into exact percentages.
 Sources: `gla-same-process-launch-controls`,
 `gla-same-process-launch-controls-raw`, `gla-isolated-framework-primitives`
 and `gla-native-application-diagnosis` in [sources.json](sources.json).
+
+## Single-point vs cumulative attribution (2026-11-19)
+
+When a multi-change candidate is reported as a single percentage, re-derive each
+component from the common frozen baseline before attributing the gain. In the
+GLA second round, the cumulative output-batching candidate (built on the
+intra-batching candidate) measured 0.9736 vs baseline, but the same output
+batching built directly on the baseline measured 1.00743 (0.61% slower); the
+intra batching alone was 0.97890. A component's cumulative delta is therefore
+not its isolated effect. Measure each single change with the same inputs,
+device, warmup, alternating order and four-pair batch, keep the final
+combination as a separate stage, and compare the combination with the product
+(or sum) of the single-point deltas. When a change alters the autotuner's
+selected configuration, add a fixed-config control so that the semantic change
+and the configuration switch are not conflated. Retain all raw samples and label
+unresolved mechanisms as pending rather than inferring them from the timing.
+
+Sources: `gla-r2-attr-report`, `gla-r2-attr-manifest`,
+`gla-r2-attr-ab-summary`, `gla-r2-attr-profile-summary`.
