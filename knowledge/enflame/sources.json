@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewed_on": "2026-11-19",
+  "reviewed_on": "2026-11-20",
   "path_base": "directory containing this manifest",
   "note": "External local evidence pointers only; not bundled or guaranteed available on another machine. Hashes pin the reviewed artifacts, not current task compatibility.",
   "sources": [
@@ -3075,15 +3075,15 @@
     {
       "id": "gla-r2-attr-report",
       "path": "../../../gla-r2-attr.z3ImgQ/candidate/docs/final-report.md",
-      "sha256": "64b9b64aaa43c6f6754d581c618049a38591a260a5eefde38a43e5066c13905f",
-      "bytes": 16489,
+      "sha256": "86fccf100f9bc82a80b927af815d10fbc0d411467348ac7920df13e79762de3c",
+      "bytes": 20705,
       "available_on_review": true
     },
     {
       "id": "gla-r2-attr-manifest",
       "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/versions/manifest.json",
-      "sha256": "25512d30a6e8ef11c70510c32b0e6f7bbe28b1668299719a4e2e1265f20eb5ba",
-      "bytes": 2445,
+      "sha256": "53fce100e33e554fd50f7eaf047071b61f476d8f98500ed4b8f0007a87b6a636",
+      "bytes": 2881,
       "available_on_review": true
     },
     {
@@ -3117,15 +3117,50 @@
     {
       "id": "gla-r2-attr-candidates",
       "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/candidates.jsonl",
-      "sha256": "f8279149e2fa7c5a79ddc882a8c5d98f53feaa082a504b76dfc006cef9809f01",
-      "bytes": 8678,
+      "sha256": "fe427a10cabff78b4ac272017b0b338d999a039d5853b1f67bac0eeb84e57ad7",
+      "bytes": 10175,
       "available_on_review": true
     },
     {
       "id": "gla-r2-attr-benchmark",
       "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/benchmark.csv",
-      "sha256": "abbdeb263bd2bdc00fc0e29e0b54cce6a553ab23fd6958c2fe341474af2792d1",
-      "bytes": 681,
+      "sha256": "e7286868e0c17ebe3078f24bbcc561be7a225f04ef55970f8b554ad7e217af2e",
+      "bytes": 771,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-compiler-doc",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/docs/compiler-attribution.md",
+      "sha256": "597c940edcc4e6de74835fa6c97b9674cdc47e724e380276b23b505ed95e7965",
+      "bytes": 11964,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-compiler-ir-baseline",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/attribution/compiler-ir/baseline.json",
+      "sha256": "ed342b852abacf640a07d7de693290200c9f31f63fac73960a3a153f51b8bf1b",
+      "bytes": 4103,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-compiler-ir-c009",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/attribution/compiler-ir/c009.json",
+      "sha256": "cfa7a67deffffa8692f7939883ee6782ef6227916565a90755d6cf6df4e26600",
+      "bytes": 4043,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-c006-direct",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/attribution/ab-direct-no-c006/summary.json",
+      "sha256": "a34bc5ce16c3e5c8b9a31c7b8e683e1016d044e425a4842e1dbc3e658e8965e2",
+      "bytes": 5364,
+      "available_on_review": true
+    },
+    {
+      "id": "gla-r2-attr-c006-correctness",
+      "path": "../../../gla-r2-attr.z3ImgQ/candidate/runs/attribution/correctness-no_c006/summary.json",
+      "sha256": "2adfdd83399f5ea9ed3f014e6f2adec1d4f9c01c06eff291ef56085035bd301a",
+      "bytes": 2612,
       "available_on_review": true
     }
   ]

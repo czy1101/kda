@@ -138,6 +138,9 @@ contracted call with alternating A/B rounds and retain raw samples.
 - No utilization, bandwidth or overlap claim is made; the device's DRAM counters
   are known-unavailable per [S60-EVIDENCE-002](efsmi-gpm-monitor.md).
 
+- See [S60-TRITON-014](triton-shared-transpose-materialization.md) for the
+  shared-memory accounting of the key-major FP32 gate tile: the time-major
+  form removes a 32K+32K shared transpose pair.
 - Removing an operand-preparation cost can change the autotuner's selected
   configuration (here the output kernel moved from BK=128 to 256). Report the
   deployed auto-config delta and a fixed-config control; only the fixed-config

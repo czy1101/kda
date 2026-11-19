@@ -128,3 +128,16 @@ unresolved mechanisms as pending rather than inferring them from the timing.
 
 Sources: `gla-r2-attr-report`, `gla-r2-attr-manifest`,
 `gla-r2-attr-ab-summary`, `gla-r2-attr-profile-summary`.
+
+## Compile hash vs device code (2026-11-20)
+
+Do not treat a changed Triton cache key as a device-code change. In the GLA
+c009 attribution, `_chunk_fwd_state_scan_kernel` changed its Triton hash from
+`f847a01a...` to `776d68c5...`, but its GCUIR, LLIR and fatbin were
+byte-identical; the TTIR differed only in source-line numbers (230 -> 233) and
+SSA/`#loc` numbering. Compare GCUIR/LLIR/fatbin (or disassembly) before
+attributing a kernel-hash change to a code change. A changed source path or a
+line-number shift is enough to change the cache key.
+
+Sources: `gla-r2-attr-compiler-doc`, `gla-r2-attr-compiler-ir-baseline`,
+`gla-r2-attr-compiler-ir-c009`.

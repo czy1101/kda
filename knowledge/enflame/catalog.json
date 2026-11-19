@@ -1099,6 +1099,36 @@
         "gla-r2-attr-ab-summary",
         "gla-r2-attr-profile-summary"
       ]
+    },
+    {
+      "id": "S60-TRITON-014",
+      "path": "triton-shared-transpose-materialization.md",
+      "languages": [
+        "triton"
+      ],
+      "keywords": [
+        "shared memory",
+        "transpose",
+        "key-major",
+        "time-major",
+        "block pointer",
+        "FP32 gate",
+        "layout conversion",
+        "local state",
+        "gcuir",
+        "fatbin",
+        "dma wait",
+        "barrier"
+      ],
+      "status": "performance-observed",
+      "summary": "Key-major FP32 block-pointer tiles consumed by a broadcast elementwise op can materialize a 32K+32K shared transpose pair; loading the tile time-major keeps it local and leaves only the BF16 dot-operand transpose, dropping shared memory from 64 KiB to 32 KiB.",
+      "sources": [
+        "gla-r2-attr-compiler-doc",
+        "gla-r2-attr-compiler-ir-baseline",
+        "gla-r2-attr-compiler-ir-c009",
+        "gla-r2-attr-ab-summary",
+        "gla-r2-attr-profile-summary"
+      ]
     }
   ]
 }
