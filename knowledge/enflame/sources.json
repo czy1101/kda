@@ -3075,8 +3075,8 @@
     {
       "id": "gla-r2-attr-report",
       "path": "../../../gla-r2-attr.z3ImgQ/candidate/docs/final-report.md",
-      "sha256": "86fccf100f9bc82a80b927af815d10fbc0d411467348ac7920df13e79762de3c",
-      "bytes": 20705,
+      "sha256": "3634d971c45a9b72ed41e814d33599f1380a0ddb3da49cad9edd6650dd6988e9",
+      "bytes": 20700,
       "available_on_review": true
     },
     {
@@ -3131,8 +3131,8 @@
     {
       "id": "gla-r2-attr-compiler-doc",
       "path": "../../../gla-r2-attr.z3ImgQ/candidate/docs/compiler-attribution.md",
-      "sha256": "597c940edcc4e6de74835fa6c97b9674cdc47e724e380276b23b505ed95e7965",
-      "bytes": 11964,
+      "sha256": "e6fcea634e23abf09253093b4ff19c6d67cbfeb9dd837f8fd1110e917c0083ae",
+      "bytes": 11959,
       "available_on_review": true
     },
     {
