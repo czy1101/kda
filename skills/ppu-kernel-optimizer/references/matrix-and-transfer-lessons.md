@@ -191,3 +191,105 @@ Distinguish an aggregate win from winning every shape, and distinguish a margina
 aggregate per-shape win from winning that shape in each paired process. Keep raw
 samples and static artifacts; do not infer measured DRAM bytes, occupancy, bank
 conflicts or stall percentages from their absence.
+
+## 7. Predicated native gather/add can preserve the dot-to-softmax layout
+
+An observed PPU-ZW810E attention optimization on PyTorch 2.10 / Triton 3.6
+replaced only relative-bias loading and addition with
+`tl.inline_asm_elementwise`. The computation remained
+`score = dot(Q, transpose(K)) * scale + relative_bias`, followed by the original
+attention mask, online softmax and PV. Consider this pattern when compiler
+evidence identifies layout conversions or duplicated elementwise/reduction
+work between matrix operations; do not introduce assembly just because it
+permits lower-level control.
+
+### Diagnose the actual layout chain
+
+MMA layout describes which thread/register owns each matrix accumulator element;
+it is not the input tensor's memory layout. In the observed parent TTGIR:
+
+1. QK already produced FP32 scores in `#mma` layout.
+2. Ordinary masked `tl.load` produced bias in `#blocked`, followed by
+   `convert_layout` to `#mma`. The addition itself was already in MMA layout.
+3. Masked scores were also converted from MMA to blocked layout. The compiler
+   retained two row-maximum/normalization paths and two probability expressions:
+   blocked for the denominator and MMA for the PV consumer.
+
+The candidate made score, per-element bias address and validity predicate share
+MMA layout in a single native load/convert/add operation. The resulting TTGIR
+kept the downstream maximum, exponentiation and sum in MMA layout, removing the
+duplicated paths. Inline assembly does not universally force MMA layout; verify
+the chosen encodings for every relevant specialization and compiler revision.
+
+### Narrow implementation pattern
+
+For BF16 bias, the observed implementation was:
+
+```python
+scores = tl.inline_asm_elementwise(
+    "{ .reg .pred p; .reg .b32 raw; .reg .f32 bias; "
+    "ppu.mov.b32 raw, 0; ppu.setp.ne.u32 p, $3, 0; "
+    "@p ppu.ld.global.u16 raw, [$2]; "
+    "ppu.shl.b32 raw, raw, 16; ppu.mov.b32 bias, raw; "
+    "ppu.add.f32 $0, $1, bias; }",
+    "=f,f,l,r", [scores, rel_ptr.to(tl.uint64), bias_valid.to(tl.int32)],
+    dtype=tl.float32, is_pure=False, pack=1,
+)
+```
+
+`$0` is the FP32 output, `$1` the FP32 score, `$2` the 64-bit address and `$3`
+the integer predicate. The memory-reading operation is marked `is_pure=False`;
+`pack=1` processes corresponding scalar elements within the existing kernel,
+without another kernel launch. BF16 conversion shifts the loaded bits into the
+high half of an FP32 representation. FP16 requires its own conversion, observed
+as `ppu.cvt.f32.f16 bias, raw`; do not apply the BF16 bit shift to FP16 or silently
+route other dtypes through the FP16 branch.
+
+Initialize the temporary to zero before the predicated load so invalid bias
+contributes zero. Preserve the original address arithmetic, strides, safe index
+construction and validity conditions. A bias distance outside its extent means
+zero bias, not exclusion of that KV token. Keep bias validity distinct from
+causal, window and KV-tail attention masks. Treat pointer bounds, predicate
+behavior, alignment and dtype as correctness obligations of the assembly.
+
+### Verify effects rather than assuming them
+
+Archive parent and candidate for the same source specialization, input layout,
+tile, warps, stages, split count, grid and compiler version. Check TTIR/TTGIR,
+LLVM IR, final ISA and resource metadata together. One observed BF16 example
+with BM16, BN128, eight warps, one stage and splits=1 had:
+
+| Static compiler feature | Parent | Candidate |
+|---|---:|---:|
+| TTGIR `convert_layout` | 5 | 2 |
+| TTGIR reduction operations | 3 | 2 |
+| TTGIR `math.exp2` | 4 | 2 |
+| Shared allocation per CTA, bytes | 45,056 | 40,960 |
+| ISA `s.blksyn.defer` | 19 | 12 |
+| ISA `tsm.ld.b16` | 8 | 0 |
+| ISA `tsm.ld.b32` | 19 | 10 |
+| ISA `tsm.st.b32` | 23 | 10 |
+| ISA `v.exp2.f32` | 19 | 10 |
+| ISA `v.mma.f32.bf16.m16n16k16` | 16 | 16 |
+
+These are an illustrative observed lowering, not target counts or dynamic
+instruction/traffic measurements. Matrix instructions were already present in
+the parent. Shared staging for other operands, including the probability-to-PV
+conversion, remained in the candidate. Do not claim all intermediates stay in
+registers, all Shared transfers disappear, occupancy improves, or spill decreases
+without corresponding evidence.
+
+Validate supported BF16/FP16, noncontiguous layouts allowed by the API, query/KV
+tails, bias-extent boundaries, causal/window modes and split paths against the
+unchanged reference. Compare the candidate with its immediate parent while
+holding host-launch optimizations fixed, then run the formal matrix. Work saved
+inside a KV loop can matter more for long traversals, but short workloads may
+show little benefit or regress; support for multiple query tokens does not prove
+general performance benefit. Keep every run, regressions and measurement noise.
+Task-specific speedups and artifacts belong in the task workspace.
+
+Native assembly restricts portability and can inhibit compiler optimization or
+increase register pressure. It specifies local instructions and constraints,
+not physical register allocation, global scheduling or cache behavior. Retain a
+small, evidence-backed implementation only when correctness and measured whole-
+operator performance justify the maintenance cost.

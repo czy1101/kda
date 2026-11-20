@@ -5,6 +5,18 @@ description: Diagnose and optimize Triton operators on T-Head Zhenwu 810E PPU by
 
 # T-Head PPU operator optimization
 
+## Artifact isolation
+
+For operator optimization, create all task-specific files under a separate
+`kda-opt` directory (for example `/workspace/kda-opt` on the execution host).
+This includes task contracts, probes, test helpers, candidate snapshots, logs,
+caches, profiler reports, compiler dumps, and generated tuning results. Do not
+add files to the operator repository; modify only its already-existing,
+authorized backend implementation files. Redirect pytest caches, bytecode,
+compiler caches, and report outputs accordingly. Keep reusable KDA assets free
+of task artifacts. A user-designated knowledge document is an explicit output
+exception: append evidence there without deleting existing content.
+
 Read the task workspace's `.kernelpilot/task.yaml` first. It defines the implementation, reference, correctness test, formal benchmark, transport, allowed edits, and promotion criteria. KDA is the controller, not the operator repository. Preserve the original source and a recoverable best version before experiments.
 
 ## Bottleneck-first workflow
@@ -21,6 +33,12 @@ Read the task workspace's `.kernelpilot/task.yaml` first. It defines the impleme
 Use the maintained [810E architecture notes](references/ppu-architecture.md) first, then the [detailed device knowledge base](../THead/真武810E_知识库.md) for a relevant issue. Verify any uncertain capability on the actual runtime. Do not transfer NVIDIA or other PPU warp, Tensor Cell, shared-memory, cache, or register assumptions to this device.
 
 For chained GEMMs, recurrent state, triangular solves, AIU descriptors, or explicit Shared staging, read [PPU matrix and transfer lessons](references/matrix-and-transfer-lessons.md). It covers observed C-to-A fragment reuse constraints, value-major/K-split dataflow, native-tile algebra, physical-pitch descriptors, and version-specific TLE lowering limitations. Use these as evidence-backed candidate patterns, not mandatory tile sizes or guaranteed speedups.
+
+For relative bias or another indexed elementwise operation between dot and
+softmax, also read section 7 of [PPU matrix and transfer lessons](references/matrix-and-transfer-lessons.md).
+It describes a predicated native gather/add candidate that retained MMA layout
+and removed duplicated softmax work in one observed lowering. Inline assembly
+is a targeted option after compiler analysis, not a default replacement for Triton.
 
 ## Helpers
 
