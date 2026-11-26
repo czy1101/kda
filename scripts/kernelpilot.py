@@ -1684,6 +1684,18 @@ def build_prompt(
     driver = KDA_ROOT / "scripts/kernelpilot.py"
     execution = task.get("execution") or {"transport": "local"}
     agent_label = "OpenCode" if agent == "opencode" else "Codex"
+    # Step 5 of the loop is a decision, not a stage: the change class and the
+    # implementation means are chosen from the measured bottleneck. This text is
+    # backend-neutral because every target needs it; the means that exist on a
+    # given backend are named only in the backend branch below.
+    strategy_instruction = f"""Select the strategy before implementing anything: steps 4 to 6 of the nine-step loop
+in {KDA_ROOT / 'docs/agent-flow.md'} settle separate questions. State the change class
+(`kernel`, `config`, `compiler`, `runtime` or `measurement`) and the implementation
+means for the measured bottleneck, the artifact or execution signature you expect,
+and the acceptance criterion in docs/plan.md before you edit code.
+Establish that the means works in this environment before a candidate depends on it.
+A capability this repository does not probe is unavailable until you show otherwise.
+"""
     knowledge_instruction = ""
     if task.get("target", {}).get("backend") == "gcu":
         # `disabled` means the screen is neither required nor asked for: the
@@ -1702,12 +1714,33 @@ artifact. Write the screen and the selected experiment to
         compiler_instruction = f"""When the question is about generated code, lowering or a stage artifact, read
 {KDA_ROOT / 'docs/enflame-compiler-diagnostics.md'}.
 """
+        tle_policy = ((task.get("analysis") or {}).get("extensions") or {}).get(
+            "tle", "disabled"
+        )
+        if tle_policy == "disabled":
+            means_line = """TLE is disabled for this task: do not read its Wiki, do not probe its API and do
+not plan a candidate around it.
+"""
+        else:
+            means_line = f"""TLE is {tle_policy} for this task: run `assess-tle` before planning a candidate
+around it. That assessment covers documented semantics and the local interface only;
+compilation, correctness and the workload gain remain the candidate's work.
+"""
+        means_instruction = f"""Read {KDA_ROOT / 'docs/enflame-interface-assessment.md'} before proposing a candidate that
+needs more than the operator's existing implementation. It holds the means table, the
+eight items every candidate records in docs/plan.md, the five questions the report
+answers, and the five capability gates. The diagnostic layers, the change classes and
+the implementation means are three separate vocabularies; do not merge them. Only the
+operator's existing implementation in its declared language is available by default,
+and nothing here probes or routes Gluon or inline assembly: treat either as
+unavailable for this task unless it is authorized and its gates are recorded.
+{means_line}"""
         knowledge_instruction = f"""
 Read the Enflame knowledge index at {KDA_ROOT / 'knowledge/enflame/README.md'}
 and only the cards relevant to this target, language and measured bottleneck.
 Also read the S60 runbook at {KDA_ROOT / 'docs/enflame-s60-runbook.md'} for
 device allocation, staged measurement, A/B, TLE, and knowledge-update rules.
-{screen_instruction}{compiler_instruction}Record applicable card IDs and environment differences in docs/plan.md.
+{screen_instruction}{compiler_instruction}{means_instruction}Record applicable card IDs and environment differences in docs/plan.md.
 Historical observations suggest hypotheses, not current compatibility or
 performance guarantees. Revalidate in the contracted environment; knowledge
 does not override tool discovery, skill routing, constraints or evidence gates.
@@ -1766,6 +1799,7 @@ requested by the output schema.
 the KDA workflow at {KDA_ROOT / 'workflows/kernel-optimization.yaml'} and the
 optimization prompt at {KDA_ROOT / 'prompts/optimize-kernel.md'}.
 {profile_instruction}
+{strategy_instruction}
 {knowledge_instruction}
 {remote_instructions}
 {runtime_instructions}
