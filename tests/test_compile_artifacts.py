@@ -113,6 +113,66 @@ class CompileArtifactTests(unittest.TestCase):
         self.assertIsNotNone(pair["first_diff_offset"])
         self.assertGreater(pair["differing_bytes"], 0)
 
+    def test_two_specializations_of_one_kernel_are_not_paired(self):
+        # One side holds two specializations of the same kernel, the other
+        # holds one. There is no fact in the manifests that says which one
+        # corresponds, so the tool must refuse rather than pick.
+        left = self.root / "left"
+        right = self.root / "right"
+        make_capture(left, "a" * 16, {"gla.ttir": TTIR})
+        make_capture(left, "b" * 16, {"gla.ttir": TTIR_SHIFTED})
+        make_capture(right, "c" * 16, {"gla.ttir": TTIR})
+        diff = compile_artifacts.compare_sides(
+            self._index(left), self._index(right), left_root=left, right_root=right
+        )
+        self.assertEqual(diff["summary"]["counts"]["only_left"], 2)
+        self.assertEqual(diff["summary"]["counts"]["only_right"], 1)
+        self.assertEqual(diff["summary"]["counts"]["identical"], 0)
+        self.assertEqual(diff["summary"]["match_quality"]["name-only"], 0)
+        self.assertEqual(
+            diff["summary"]["ambiguous_names"],
+            [{"name": "gla.ttir", "left": 2, "right": 1}],
+        )
+        self.assertTrue(
+            any("could not be paired" in note for note in diff["unresolved"]),
+            diff["unresolved"],
+        )
+
+    def test_single_artifact_each_side_is_labelled_name_only(self):
+        # The one-to-one case still pairs, but the record says the match rests
+        # on a filename and warns that the two files may be different
+        # specializations. Pairing is not silently presented as a hit.
+        left = self.root / "left"
+        right = self.root / "right"
+        make_capture(left, "a" * 16, {"gla.ttir": TTIR})
+        make_capture(right, "c" * 16, {"gla.ttir": TTIR})
+        diff = compile_artifacts.compare_sides(
+            self._index(left), self._index(right), left_root=left, right_root=right
+        )
+        self.assertEqual(diff["pairs"][0]["match_quality"], "name-only")
+        self.assertEqual(diff["summary"]["match_quality"]["name-only"], 1)
+        self.assertEqual(diff["summary"]["ambiguous_names"], [])
+        self.assertTrue(
+            any("matched by filename only" in note for note in diff["unresolved"]),
+            diff["unresolved"],
+        )
+
+    def test_same_relative_path_is_labelled_exact_and_raises_no_name_warning(self):
+        left = self.root / "left"
+        right = self.root / "right"
+        (left / "entry").mkdir(parents=True)
+        (right / "entry").mkdir(parents=True)
+        (left / "entry" / "gla.ttir").write_text(TTIR, encoding="utf-8")
+        (right / "entry" / "gla.ttir").write_text(TTIR, encoding="utf-8")
+        diff = compile_artifacts.compare_sides(
+            self._index(left), self._index(right), left_root=left, right_root=right
+        )
+        self.assertEqual(diff["pairs"][0]["match_quality"], "exact-path")
+        self.assertFalse(
+            any("matched by filename only" in note for note in diff["unresolved"]),
+            diff["unresolved"],
+        )
+
     def test_cache_key_difference_does_not_hide_identical_device_binary(self):
         left = self.root / "left"
         right = self.root / "right"
@@ -240,6 +300,31 @@ class CompileArtifactTests(unittest.TestCase):
         parsed = manifest["artifacts"][0]["bundle"]
         self.assertFalse(parsed["parsed"])
         self.assertIn("truncated", parsed["error"])
+
+    def test_bundle_larger_than_the_parse_limit_is_reported_unparsed(self):
+        # Support range, not a guess: the parser states the limit it works
+        # within instead of reading an unbounded file into memory.
+        capture = self.root / "capture"
+        bundle = self.root / "device.o"
+        write_bundle(bundle, ["tops-dtu-enflame-tops--gcu300"])
+        make_capture(capture, "1" * 16, {"k.fatbin": bundle.read_bytes()})
+        original = compile_artifacts.MAX_PARSE_BYTES
+        compile_artifacts.MAX_PARSE_BYTES = 8
+        try:
+            manifest = self._index(capture)
+        finally:
+            compile_artifacts.MAX_PARSE_BYTES = original
+        parsed = manifest["artifacts"][0]["bundle"]
+        self.assertFalse(parsed["parsed"])
+        self.assertIn("parse limit", parsed["error"])
+
+    def test_parsed_bundle_names_the_layout_not_a_version(self):
+        capture = self.root / "capture"
+        bundle = self.root / "device.o"
+        write_bundle(bundle, ["tops-dtu-enflame-tops--gcu300"])
+        make_capture(capture, "1" * 16, {"k.fatbin": bundle.read_bytes()})
+        parsed = self._index(capture)["artifacts"][0]["bundle"]
+        self.assertEqual(parsed["format_version"], "counted-entries")
 
     def test_location_statistic_counts_only_debug_reference_differences(self):
         left = self.root / "left"

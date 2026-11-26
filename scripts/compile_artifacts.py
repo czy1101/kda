@@ -16,6 +16,12 @@ Scope and non-goals
   not proof of an IR dialect, a producer, or a pass boundary.
 - ``content_kind`` is a bounded byte sniff (magic bytes / JSON parse / text
   decodability). It is a container classification, not a semantic one.
+- Pairing is a filing decision, not proof of correspondence. Exact relative
+  paths pair as ``exact-path``. When the same filename exists once on each side
+  under different directories, the pair is recorded as ``name-only`` and an
+  ``unresolved`` entry says the two files may be different specializations of
+  one kernel. Names that remain repeated on one side are never paired; they are
+  reported in ``summary.ambiguous_names``.
 - The tool reports no operation counts and no dialect detection. A token that
   is absent from a text artifact is not evidence that the corresponding
   operation is absent; that inference has produced wrong conclusions before
@@ -55,6 +61,9 @@ TOOL_VERSION = 1
 BUNDLE_MAGIC = b"__CLANG_OFFLOAD_BUNDLE__"
 ELF_MAGIC = b"\x7fELF"
 SNIFF_BYTES = 4096
+# A capture is a header plus payloads, not a build artifact store; anything
+# larger is reported unparsed rather than read into memory.
+MAX_PARSE_BYTES = 64 * 1024 * 1024
 MAX_LINE_STATS_BYTES = 32 * 1024 * 1024
 CHUNK = 1024 * 1024
 
@@ -134,8 +143,21 @@ def _sniff(path: Path, size: int) -> tuple[str, list[str]]:
 
 
 def _parse_bundle(path: Path, size: int) -> dict[str, Any]:
-    """Parse the clang offload-bundle header. Never guesses on failure."""
+    """Parse the clang offload-bundle header. Never guesses on failure.
+
+    Only the counted-entry layout is supported: magic, an 8-byte entry count,
+    then per entry an offset, a length and the triple. A file whose size exceeds
+    the parse limit, whose count is implausible, or whose header ends early is
+    reported as unparsed with a reason. The parser does not claim to know which
+    format revision wrote the file; ``format_version`` names the layout it read,
+    not a version negotiated with the producer.
+    """
     result: dict[str, Any] = {"parsed": False, "format_version": None, "targets": []}
+    if size > MAX_PARSE_BYTES:
+        result["error"] = (
+            f"not parsed: {size} bytes exceeds the {MAX_PARSE_BYTES}-byte parse limit"
+        )
+        return result
     try:
         with path.open("rb") as handle:
             blob = handle.read()
@@ -178,7 +200,7 @@ def _parse_bundle(path: Path, size: int) -> dict[str, Any]:
                 "inside_file": offset + length <= size,
             }
         )
-    result.update({"parsed": True, "format_version": 2, "targets": targets})
+    result.update({"parsed": True, "format_version": "counted-entries", "targets": targets})
     return result
 
 
@@ -373,7 +395,10 @@ def _location_stats(left: Path, right: Path, left_size: int, right_size: int) ->
 
 def _pair_artifacts(
     left: dict[str, Any], right: dict[str, Any]
-) -> list[tuple[str, dict[str, Any] | None, dict[str, Any] | None, str]]:
+) -> tuple[
+    list[tuple[str, dict[str, Any] | None, dict[str, Any] | None, str]],
+    list[dict[str, Any]],
+]:
     """Pair artifacts by relative path, then by unique basename.
 
     The basename fallback exists because a Triton cache entry is keyed by a
@@ -381,6 +406,13 @@ def _pair_artifacts(
     filenames under a different directory. Pairing by path alone would report
     "cache key differs, everything only on one side", which is the case this
     tool exists to disprove or confirm. Ambiguous basenames are never guessed.
+
+    Returns the ordered pairs and the basenames that remain on both sides after
+    pairing. A remaining basename means one side holds several artifacts of that
+    name, so the two captures cannot be matched by name; the caller reports that
+    instead of choosing one. Two specializations of one kernel are exactly this
+    case, and picking either at random would attribute one specialization's
+    bytes to the other.
     """
     left_by_path = {item["path"]: item for item in left["artifacts"]}
     right_by_path = {item["path"]: item for item in right["artifacts"]}
@@ -422,7 +454,22 @@ def _pair_artifacts(
         ordered.append((path, left_by_path[path], None, "none"))
     for path in sorted(set(right_by_path) - matched_right):
         ordered.append((path, None, right_by_path[path], "none"))
-    return ordered
+
+    remaining_left: dict[str, int] = {}
+    for path in left_by_path:
+        if path not in matched_left:
+            name = Path(path).name
+            remaining_left[name] = remaining_left.get(name, 0) + 1
+    remaining_right: dict[str, int] = {}
+    for path in right_by_path:
+        if path not in matched_right:
+            name = Path(path).name
+            remaining_right[name] = remaining_right.get(name, 0) + 1
+    ambiguities = [
+        {"name": name, "left": remaining_left[name], "right": remaining_right[name]}
+        for name in sorted(set(remaining_left) & set(remaining_right))
+    ]
+    return ordered, ambiguities
 
 
 def compare_sides(
@@ -434,11 +481,19 @@ def compare_sides(
     locations: bool = False,
 ) -> dict[str, Any]:
     pairs: list[dict[str, Any]] = []
-    for path, lhs, rhs, matched_by in _pair_artifacts(left, right):
+    paired, ambiguities = _pair_artifacts(left, right)
+    for path, lhs, rhs, matched_by in paired:
         pair: dict[str, Any] = {
             "path": path,
             "right_path": None if rhs is None else rhs["path"],
             "matched_by": matched_by,
+            # A filename match is a coincidence of naming across directories,
+            # not a statement that both sides used the same specialization.
+            "match_quality": {
+                "path": "exact-path",
+                "basename": "name-only",
+                "none": "single-sided",
+            }[matched_by],
             "stage_hint": (lhs or rhs or {}).get("stage_hint"),
             "content_kind": (lhs or rhs or {}).get("content_kind"),
             "left": _side_summary(lhs),
@@ -484,6 +539,10 @@ def compare_sides(
         else:
             cache_key["differ"] += 1
 
+    match_quality = {"exact-path": 0, "name-only": 0, "single-sided": 0}
+    for pair in pairs:
+        match_quality[pair["match_quality"]] += 1
+
     left_stages = set(left["stages"]["present"])
     right_stages = set(right["stages"]["present"])
     unresolved: list[str] = []
@@ -498,6 +557,20 @@ def compare_sides(
         unresolved.append(
             "differing bytes do not establish differing machine instructions; "
             "inspect the device image or disassembly before claiming an instruction change"
+        )
+    if match_quality["name-only"]:
+        unresolved.append(
+            f"{match_quality['name-only']} pair(s) were matched by filename only, across "
+            "different directories or cache keys; the two files may belong to different "
+            "specializations of the same kernel, so byte equality here is not evidence "
+            "that the compared runs used the same specialization"
+        )
+    for item in ambiguities:
+        unresolved.append(
+            f"{item['left']} artifact(s) named {item['name']!r} on the left and "
+            f"{item['right']} on the right could not be paired; split each capture by "
+            "specialization before comparing, or the same-named artifacts will be "
+            "compared across specializations"
         )
     for stage in sorted(left_stages - right_stages):
         unresolved.append(f"stage {stage!r} exists only on the left side")
@@ -531,6 +604,8 @@ def compare_sides(
             },
             "by_content_kind": kinds,
             "cache_key": cache_key,
+            "match_quality": match_quality,
+            "ambiguous_names": ambiguities,
             "stages": {
                 "left": sorted(left_stages),
                 "right": sorted(right_stages),
@@ -589,12 +664,16 @@ def summarize_index(manifest: dict[str, Any]) -> str:
 def summarize_compare(diff: dict[str, Any]) -> str:
     counts = diff["summary"]["counts"]
     cache_key = diff["summary"]["cache_key"]
+    match_quality = diff["summary"]["match_quality"]
     lines = [
         f"{TOOL_NAME}: {diff['left_label']} vs {diff['right_label']}",
         f"  identical={counts['identical']} differ={counts['differ']} "
         f"only_left={counts['only_left']} only_right={counts['only_right']}",
         f"  cache key: same={cache_key['same']} differ={cache_key['differ']} "
         f"unknown={cache_key['unknown']}",
+        f"  matched: exact-path={match_quality['exact-path']} "
+        f"name-only={match_quality['name-only']} "
+        f"ambiguous-names={len(diff['summary']['ambiguous_names'])}",
     ]
     for stage in diff["summary"]["stages"]["only_in_left"]:
         lines.append(f"  missing on right: {stage}")
