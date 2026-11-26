@@ -76,22 +76,36 @@ waive the convention. Preserve task permissions and historical evidence.
 
 ## Optimization loop
 
-For every kernel optimization task:
+Nine steps, defined in [docs/agent-flow.md](docs/agent-flow.md) with their stage
+mapping. They settle different questions and are not interchangeable:
 
-1. Read the task contract.
-2. Inspect the implementation and reference.
-3. Verify correctness.
-4. Establish baseline performance.
-5. Profile the current bottleneck when needed. Diagnosis is two-step: screen the
-   six layers, then select one deep dive that can change a decision — see
+1. Fix the task: semantics, shapes, dtypes, layout, tolerance, device, commands,
+   baseline identity, measurement scope, target, regression limit, rollback.
+2. Verify correctness of the unmodified implementation.
+3. Establish the baseline under the conditions later candidates will be measured in.
+4. Locate the bottleneck: screen the six layers, then select one deep dive that
+   can change a decision — see
    [docs/bottleneck-localization.md](docs/bottleneck-localization.md).
-6. Write an optimization hypothesis.
-7. Implement one coherent candidate.
-8. Run correctness.
-9. Run benchmark.
-10. Record evidence.
-11. Keep, revise, or reject the candidate.
-12. Repeat until the target or stop condition is reached.
+5. Select the strategy: the change class and the implementation means, with the
+   candidate's expected signature and acceptance criterion written down first.
+6. Validate the capability, implement one coherent candidate, and run correctness.
+7. Measure under the same conditions as the baseline.
+8. Decide keep or reject, with a reason and a rollback result.
+9. Report what was established, at which verification level, and whether it is
+   reusable beyond this operator.
+
+Step 4 names no change; step 5 implements nothing; step 6 establishes that the
+interface works before it establishes that the candidate is correct. A run may end
+at step 4 with an evidence-backed "no actionable bottleneck".
+
+Three vocabularies stay separate: the six diagnostic **layers**, the five
+**change classes** (`kernel`, `config`, `compiler`, `runtime`, `measurement`), and
+the **implementation means**. A layer does not choose a class and a class does not
+choose a means. For Enflame targets the means table, the eight items each
+candidate records in `docs/plan.md`, and the five capability gates are in
+[docs/enflame-interface-assessment.md](docs/enflame-interface-assessment.md);
+none of them is machine-checked. Choosing a means does not move the bottleneck
+between layers.
 
 ## Repository rules
 
@@ -116,6 +130,7 @@ For every kernel optimization task:
 | OpenCode host/controller entry points | `docs/opencode.md` |
 | S60 device, measurement, and TLE rules | `docs/enflame-s60-runbook.md` |
 | How to choose a diagnosis direction and stop | `docs/bottleneck-localization.md` |
+| How to choose an implementation means and prove it works before a candidate depends on it | `docs/enflame-interface-assessment.md` |
 | How to read the S60 compile chain and artifacts | `docs/enflame-compiler-diagnostics.md` |
 | "Which candidate is fastest right now" | `runs/candidates.jsonl`, `runs/benchmark.csv` |
 | Which stage the task is currently in | the task workspace, not this repository |

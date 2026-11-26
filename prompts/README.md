@@ -21,7 +21,8 @@ The templates are intentionally task-agnostic. Fill in the task objective, const
 2. Enter the task implementation workspace.
 3. Copy the relevant template content into the agent session. For a full run,
    start from `optimize-kernel.md`; it reads the task contract and delegates the
-   method to `AGENTS.md`, `workflows/kernel-optimization.yaml`, and the Skills.
+   method to `AGENTS.md`, `workflows/kernel-optimization.yaml`,
+   `docs/agent-flow.md` (the nine-step loop), and the Skills.
 4. Ask the agent to read the workspace and write `docs/draft.md`.
 5. For a full run, let `optimize-kernel.md` and the workflow produce and execute
    the plan; use the narrower prompts only for a deliberately separate analysis,

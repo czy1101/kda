@@ -90,12 +90,21 @@ report when none exists and preserve frozen files and historical evidence.
 2. Do not start implementation until `docs/draft.md` exists.
 3. Verify correctness and record the baseline measurement.
 4. Diagnose the bottleneck; profile only when the next change is not already justified by evidence.
-5. Implement one coherent hypothesis per candidate.
-6. Deploy through the configured transport, run correctness after each change,
+5. Select the strategy: name the change class and the implementation means for the
+   measured bottleneck, and write the expected artifact or execution signature and
+   the acceptance criterion into `docs/plan.md` before editing anything. Layers,
+   change classes and means are separate vocabularies; see KDA
+   `<kda>/docs/agent-flow.md` and, for Enflame targets,
+   `<kda>/docs/enflame-interface-assessment.md`.
+6. Validate that the chosen means works in this environment before the candidate
+   depends on it. Nothing in KDA probes or routes a lower-level authoring layer or
+   inline assembly, so an unprobed interface is unavailable until shown otherwise.
+7. Implement one coherent hypothesis per candidate.
+8. Deploy through the configured transport, run correctness after each change,
    and benchmark only correct candidates.
-7. Record every attempt in `runs/candidates.jsonl` and `runs/benchmark.csv`.
-8. Keep the best candidate; continue until the target or a stop condition is reached.
-9. Produce the final report.
+9. Record every attempt in `runs/candidates.jsonl` and `runs/benchmark.csv`.
+10. Keep the best candidate; continue until the target or a stop condition is reached.
+11. Produce the final report.
 
 After a rejected remote candidate, restore the best correct mirror and push it
 through the same adapter before continuing.
@@ -114,10 +123,11 @@ promotion, and retain the per-shape measurements in `runs/benchmark.csv`.
 | File | Contents |
 |---|---|
 | `docs/draft.md` | Initial plan draft. Required before implementation starts. |
-| `docs/plan.md` | The executable plan. |
+| `docs/plan.md` | The executable plan. Also carries the implementation means and the capability-gate results; no ledger field records them. |
 | `runs/candidates.jsonl` | One JSON record per candidate: id, parent, hypothesis, changes, correctness, latency, baseline, speedup, decision, reason. |
 | `runs/benchmark.csv` | Per-shape measurements with columns `candidate,shape,metric_value,baseline_value,unit,status`. The runner recomputes promotion from these values. |
 | `runs/analysis-capabilities.json` | Backend-declared tools probed in this exact environment, with availability, versions, and default selection. |
+| `runs/bottleneck-screen.json` | The six-layer screen and the selected deep dive, when the task policy asks for it. |
 | `profile/` | Profiler output or report summaries. |
 
 A future reader must be able to reconstruct what changed, what was measured, and

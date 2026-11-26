@@ -13,6 +13,27 @@
 # TLE assessment evidence: ../schemas/tle-assessment.schema.json
 # Diagnosis screen: ../schemas/bottleneck-screen.schema.json
 # Diagnosis method: ../docs/bottleneck-localization.md
+# Strategy selection and interface assessment: ../docs/enflame-interface-assessment.md
+#
+# The nine steps of ../docs/agent-flow.md map onto the stages as follows. The
+# steps are separated because they settle different questions; a stage id here is
+# the automation boundary, not a licence to merge two steps into one decision.
+#
+#   step 1 fix the task ............ init, select_backend, prepare_execution
+#   step 2 verify correctness ...... correctness
+#   step 3 establish the baseline .. baseline, benchmark, evaluate
+#   step 4 locate the bottleneck ... diagnose, select_analysis_strategy, profile stages
+#   step 5 select strategy ......... select_optimization_strategy, resolve_optional_extensions
+#   step 6 validate, implement ..... optimize_with_extension, optimize, deploy_candidate,
+#                                    correctness_candidate
+#   step 7 same-condition A/B ...... benchmark_candidate, compare_candidate,
+#                                    generalization_check
+#   step 8 keep or drop ............ keep_candidate, reject_candidate, restore_best, check_stop
+#   step 9 commit and accumulate ... promote, finalize_without_target, report
+#
+# Step 5 has no stage of its own. The change class and the implementation means,
+# the eight per-candidate items and the five capability gates are recorded in
+# docs/plan.md; no evidence gate reads them, and this workflow does not claim to.
 
 name: kernel-optimization
 version: 1
@@ -106,7 +127,7 @@ stages:
   # Benchmark runs every round. Expensive or backend-specific analysis is
   # selected only when existing evidence does not justify the next candidate.
   #
-  # This stage is two-step, per ../docs/bottleneck-localization.md: screen the
+  # Step 4. This stage is two-step, per ../docs/bottleneck-localization.md: screen the
   # six layers and record runs/bottleneck-screen.json, then select one deep dive
   # instead of collecting every artifact. A layer may be not_applicable. The
   # screen is analytical work, not six mandatory device experiments.
@@ -118,6 +139,8 @@ stages:
     on_no_actionable_bottleneck: finalize_without_target
     on_backend_capability_exhausted: finalize_without_target
 
+  # Step 4, continued: only when the screen cannot name a cause does the run
+  # pay for a capability-driven analysis route.
   - id: select_analysis_strategy
     action: select_capability_driven_analysis_strategy
     on_discover_tools: discover_analysis_tools
@@ -175,13 +198,15 @@ stages:
     on_no_actionable_bottleneck: finalize_without_target
     on_backend_capability_exhausted: finalize_without_target
 
+  # Step 5. Name the change class and the implementation means before writing
+  # code; the eight per-candidate items live in docs/plan.md.
   - id: select_optimization_strategy
     action: select_available_optimization_extension_from_validated_assessment
     on_extension_available: optimize_with_extension
     on_no_safe_optimization: finalize_without_target
     otherwise: optimize
 
-  # TLE is optional. Use it only when the task requested it and the recorded
+  # Step 6. TLE is optional. Use it only when the task requested it and the recorded
   # assessment confirms both the project Wiki and API are available.
   - id: optimize_with_extension
     action: implement_candidate_with_selected_extension
@@ -189,6 +214,7 @@ stages:
     on_optional_extension_failure: optimize
     on_required_extension_failure: finalize_without_target
 
+  # Step 6. Implement one coherent candidate; correctness follows before timing.
   - id: optimize
     action: implement_candidate
     next: deploy_candidate
@@ -203,6 +229,7 @@ stages:
     on_pass: benchmark_candidate
     on_fail: reject_candidate
 
+  # Step 7. Same card, input, layout, warmup and timed region as the baseline.
   - id: benchmark_candidate
     action: benchmark_candidate
     next: compare_candidate
@@ -220,6 +247,7 @@ stages:
     on_overfitting_risk: reject_candidate
     on_fail: reject_candidate
 
+  # Step 8. Every outcome carries a reason and a rollback result.
   - id: keep_candidate
     action: record_candidate_and_save_best_checkpoint
     next: evaluate
@@ -258,6 +286,7 @@ stages:
     action: verify_scope_goal_and_evidence
     next: report
 
+  # Step 9. Report what was established and at which verification level.
   - id: report
     action: generate_final_report
     terminal: true

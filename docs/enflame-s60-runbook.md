@@ -140,9 +140,29 @@ Do not claim a speedup from one noisy sample. Do not compare a warm candidate
 against a cold baseline, or a candidate measured with one device/timer against a
 baseline measured with another.
 
-## 5. TLE
+## 5. Select the implementation means
 
-TLE is disabled by default. If the task enables it:
+Step 5 of the loop in [agent-flow.md](agent-flow.md) names the change class and
+the implementation means. They are separate from the six diagnostic layers, and
+separate from each other: a `kernel` change can be written in standard Triton,
+TLE, Gluon or inline assembly, and choosing a means does not move the bottleneck
+from one layer to another.
+
+Read [enflame-interface-assessment.md](enflame-interface-assessment.md) before
+proposing a candidate that needs anything beyond the operator's existing Triton
+kernel. It carries the means table, the eight items every candidate states in
+`docs/plan.md`, the five questions the report answers, and the five capability
+gates — documented semantics, local interface, target compile, correct run, real
+workload gain — that must pass in that order.
+
+Only standard Triton is available by default here. TLE needs the task's explicit
+policy, and nothing in this repository probes or routes Gluon or inline assembly.
+Trying no optional means at all is a normal run.
+
+## 6. TLE
+
+TLE is disabled by default. It is one means among four, not a default upgrade
+path, and enabling it does not make it usable. If the task enables it:
 
 1. Read the project's `tle-wiki` for the installed version; do not infer an API
    from another version or from a conda environment name.
@@ -158,7 +178,7 @@ TLE is disabled by default. If the task enables it:
 If no documented primitive expresses the required semantics, report the concrete
 missing primitive and its required behavior instead of inventing an interface.
 
-## 6. Knowledge base updates
+## 7. Knowledge base updates
 
 After a run, update KDA knowledge only when the result is reusable across
 operators: a mechanism, interface, applicability condition, or evidence-backed
@@ -174,7 +194,7 @@ repository is not writable, put the proposed update in the task's `docs/` and
 report the pending destination; do not modify frozen tests, benchmarks,
 contracts, or remote allowlists to publish knowledge.
 
-## 7. Task parameters for a new S60 operator
+## 8. Task parameters for a new S60 operator
 
 A minimal contract starts like this (replace every placeholder):
 
