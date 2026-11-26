@@ -5,7 +5,7 @@ kernel, and where to stop. This is a diagnostic procedure for the `compiler`
 direction in [bottleneck-localization.md](bottleneck-localization.md). It does
 not authorize changing the compiler.
 
-Everything below is scoped to one reviewed installation (FlameTree Triton 3.6.0
+Everything below is scoped to one reviewed installation (FlagTree Triton 3.6.0
 with the `enflame` backend, `torch_gcu`, TOPS SDK LLVM 11). Stage names, pass
 counts and tool paths are observations from that environment, not a
 specification. Re-check the installed chain before relying on any of them.
@@ -37,6 +37,11 @@ What the reviewed chain looked like:
 | `gcuir` | backend | in-process | 21 passes registered, 19 executed; two skipped conditionally |
 | `llir` | external `gcu-compiler-opt` | **external process** | 28 passes; `toolkit` prints child stderr into the parent |
 | `fatbin` | external `gcu-compiler-compile --device-only` | **external process** | machine code from `llc`, link from `clang`/`ld.lld`, packaging from `clang-offload-bundler` |
+
+Pass counts are not a pipeline specification: each number above is the count
+observed while compiling **one** kernel sample on the reviewed installation.
+Another kernel, another shape class or another build can register a different
+set, so re-count before concluding that a pass "must have run".
 
 Three consequences that change how artifacts are read:
 
@@ -106,6 +111,13 @@ Order of operations:
 6. **Identical bytes do not imply an unchanged timed region; differing bytes do
    not imply differing machine instructions.** For the second case, continue to
    the device image or the disassembly before saying "instruction".
+7. **Check what was paired.** One kernel name can hold several specializations
+   in one capture. The tool pairs exact relative paths first and falls back to a
+   unique filename, recording `match_quality: name-only` when it does; a name
+   that stays repeated on either side is not paired at all and is listed under
+   `summary.ambiguous_names`. A name-only pair may be two different
+   specializations, so confirm shape, dtype and launch options on both sides
+   before reading a byte result as a comparison of the same artifact.
 
 Offline, with no device and no framework import:
 
@@ -159,11 +171,28 @@ four different numbers:
 
 | Value | Source | Meaning |
 |---|---|---|
-| `metadata.shared` | computed at compile time, stored in cache metadata | what gets passed to the module loader |
+| `metadata.shared` | computed at compile time, stored in cache metadata | consumed as the launch's dynamic shared-memory argument (`sharedMemBytes`), passed through the host launcher |
 | sum of shared allocation sizes in an IR stage | text in that stage | an allocation ledger, not a peak; buffers may not be live together |
 | `metadata.max_shared` | compile-time formula (`8 MiB × num_warps`) | an upper bound used to raise `OutOfResources` |
 | `max_shared_mem` | a hard-coded per-arch dict in the backend driver | not a device query |
 | shared region in the device ELF | vendor struct | physical reservation; mapping from `metadata.shared` is unresolved here |
+
+These are four different quantities and only one of them is measured:
+
+- the **allocation ledger** is text in an IR stage: what was allocated, not what
+  was live;
+- the **metadata field** is a compile-time number handed to the launch;
+- the **live set** — which buffers overlap in time — was not measured at all;
+- the **physical reservation** is the device image's own record, and its
+  relationship to the metadata number is unresolved on this backend.
+
+A previous revision of this page said `metadata.shared` is "what gets passed to
+the module loader". The reviewed path is the launch argument, not the module
+loader. This revision did not re-open the installed backend — the S60 host was
+not reachable from the machine that edited it — so the claim rests on the
+earlier installed-source review and still needs its exact file and line pinned
+on the host. Treat "which argument carries it" as established and "where
+exactly, in this version" as outstanding.
 
 For the local-state kernel reviewed, `metadata.shared` was 65536 while the
 device ELF's block shared-segment field was 0. Treat the relationship as
@@ -178,7 +207,7 @@ are not interchangeable and none of them alone is "the hardware width".
 | Artifact finding | Where to change | What to keep fixed |
 |---|---|---|
 | The kernel expresses redundant work (a mask that repeats the producer's zeros, a narrow strided read, a duplicated staging copy) | Kernel source | Config, so the measurement isolates the source change |
-| The expression is reasonable but the layout conversion is materialized as extra transfers | Kernel source first; a compiler rule change only if the rewrite is impossible | Config; then compare artifacts to confirm the conversion disappeared |
+| The expression is reasonable but the layout conversion is materialized as extra transfers | Kernel source, unless the rewrite is impossible or the rule would serve several kernels worth the maintenance | Config; then compare artifacts to confirm the conversion disappeared |
 | The deployed configuration is what moved the number | Configuration, as a controlled experiment | Source |
 | The generated device code is identical while the full call differs | Runtime boundary: submission, allocation, synchronization, module load, host launcher, or the timed region | Kernel source and config |
 | The first call is slow and the warm call is normal | Compilation, autotune trials, cache population, module load, host-launcher build — not the kernel | Warm-up policy, and say whether the target metric includes these |
@@ -186,7 +215,11 @@ are not interchangeable and none of them alone is "the hardware width".
 Record which of the four change classes the candidate belongs to
 (`kernel`, `config`, `compiler`, `runtime`). A source rewrite whose gain partly
 comes from the autotuner switching configuration is a source change plus a config
-change, reported as two numbers; the fixed-config delta is the semantic one.
+change: report the delta at fixed configuration, the delta at fixed source, and
+the deployed combination, then say whether they add up. The fixed-config delta is
+the semantic one, but it is not a licence to subtract: the rewrite can make a
+configuration viable that was not viable before, so the two deltas need not sum
+to the deployed result.
 
 Two examples from the S60 GLA work, both of which were initially mis-attributed:
 
@@ -202,8 +235,16 @@ Two examples from the S60 GLA work, both of which were initially mis-attributed:
 
 ## 6. Gate for actually modifying the compiler
 
-This repository does not authorize compiler changes. If a future task does, it
-needs its own contract and must satisfy all of the following before any claim:
+This repository does not authorize compiler changes. Source and configuration
+are the cheap places to change; a rule change is a different kind of decision,
+and "the source cannot express it" is only one of the reasons to take it. The
+others are how many kernels the rule would serve, who maintains it, how narrow
+its applicability condition is, and what it might break in kernels that already
+compile. A rule that helps one kernel and silently changes another is a
+regression with a speedup attached.
+
+If a future task does authorize one, it needs its own contract and must satisfy
+all of the following before any claim:
 
 1. A separate task in a separate workspace, with an explicit allowed scope for
    the compiler build inputs. Never edit the installed toolchain in place.
@@ -221,6 +262,10 @@ needs its own contract and must satisfy all of the following before any claim:
    only changed variable.
 8. An impact statement for other shapes, other operators and other backends,
    including which ones were not tested.
+9. The reuse case: which other kernels or operators this rule is expected to
+   serve, and what happens to them if it is wrong.
+10. A maintenance statement: who owns the rule, which upstream version it is
+    pinned to, and what happens on the next compiler upgrade.
 
 Absent any of these, the correct outcome is a documented proposal, not a
 modified toolchain.

@@ -36,20 +36,29 @@ Diagnosis is two steps, and the order is binding. At every `diagnose` stage:
    observable change, both falsification conditions, the next action for each
    outcome, and its budget and stop condition.
 
+The ordering above is an instruction to you. It is not a program gate: the record
+is checked by `verify` and at the end of a run, so an early experiment will not
+be blocked, it will be judged afterwards. Do not describe the screen as having
+prevented anything.
+
 Follow `docs/bottleneck-localization.md` for the layer table, the deep-dive
-routing rules, the four-link evidence chain, the five change classes and the
-attribution-strength levels. Do not promote a symptom into a layer's conclusion,
-and do not run an experiment whose two outcomes lead to the same next action.
+routing rules, the four-link evidence chain, the five change classes, and the two
+separate attribution axes — control level and observation depth. Do not promote a
+symptom into a layer's conclusion, and do not run an experiment whose two
+outcomes lead to the same next action.
 
 When the question is about generated code, also read
 `docs/enflame-compiler-diagnostics.md`. Classify the candidate as `kernel`,
 `config`, `compiler` or `runtime` in the screen; a source rewrite whose gain
-partly comes from the autotuner switching configuration is two changes and needs
-a fixed-config control.
+partly comes from the autotuner switching configuration is two changes. Report
+the source delta at fixed configuration, the configuration delta at fixed source,
+and the deployed combination as three numbers, and say whether they add up.
 
 Existing evidence that already supports a candidate is enough. Stop collecting
-once the decision is made, and report the attribution level you reached instead
-of the one the story suggests.
+once the decision is made, and report the control level and the observation depth
+you reached instead of the ones the story suggests. If timing moved with source,
+configuration and compiler all fixed, say that the cause is unidentified rather
+than naming runtime or measurement.
 
 ## Execution and safety
 

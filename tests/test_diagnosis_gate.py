@@ -244,6 +244,42 @@ class DiagnosisGateTests(unittest.TestCase):
         write_screen(self.workspace, valid_screen())
         self.assertEqual(self._errors(base_task(bottleneck_screen="required")), [])
 
+    def test_counter_observation_requires_a_scope_statement(self):
+        # A counter reading is an observation, not a causal claim, and it is only
+        # meaningful inside the documented scope of that counter.
+        screen = valid_screen()
+        screen["attribution"] = {"control_level": "L2", "observation": "counter"}
+        errors = kernelpilot.validate_bottleneck_screen(screen)
+        self.assertTrue(any("scope_note" in e for e in errors), errors)
+        screen["attribution"]["scope_note"] = "unit activity, not latency; counts inclusive"
+        self.assertEqual(kernelpilot.validate_bottleneck_screen(screen), [])
+
+    def test_attribution_axes_are_validated_separately(self):
+        screen = valid_screen()
+        screen["attribution"] = {"control_level": "L4", "observation": "telemetry"}
+        errors = kernelpilot.validate_bottleneck_screen(screen)
+        self.assertTrue(any("control_level" in e for e in errors), errors)
+        self.assertTrue(any("observation must be one of" in e for e in errors), errors)
+
+    def test_decomposition_must_state_three_numbers_and_a_relationship(self):
+        screen = valid_screen()
+        screen["decomposition"] = {
+            "source_at_fixed_config": "-9.1%",
+            "config_at_fixed_source": "-5.6%",
+            "deployed_combination": "-14.75%",
+            "relationship": "not-additive",
+        }
+        self.assertEqual(kernelpilot.validate_bottleneck_screen(screen), [])
+        del screen["decomposition"]["deployed_combination"]
+        errors = kernelpilot.validate_bottleneck_screen(screen)
+        self.assertTrue(
+            any("decomposition.deployed_combination" in e for e in errors), errors
+        )
+        screen["decomposition"]["deployed_combination"] = "-14.75%"
+        screen["decomposition"]["relationship"] = "adds-up"
+        errors = kernelpilot.validate_bottleneck_screen(screen)
+        self.assertTrue(any("relationship must be one of" in e for e in errors), errors)
+
 
 class ContractCompatibilityTests(unittest.TestCase):
     def setUp(self):
@@ -330,6 +366,16 @@ class PromptRoutingTests(unittest.TestCase):
         self.assertNotIn("bottleneck-localization.md", prompt)
         # The offline artifact tool is backend-neutral and stays available.
         self.assertIn("compile_artifacts.py", prompt)
+
+    def test_disabled_policy_does_not_ask_for_the_screen_in_the_prompt(self):
+        # `disabled` must not instruct the agent to produce a record the gate
+        # will ignore; the compiler diagnostics document stays available.
+        prompt = kernelpilot.build_prompt(
+            self.workspace, base_task(bottleneck_screen="disabled")
+        )
+        self.assertNotIn("bottleneck-screen.json", prompt)
+        self.assertNotIn("bottleneck-localization.md", prompt)
+        self.assertIn("enflame-compiler-diagnostics.md", prompt)
 
     def test_prompt_keeps_the_existing_evidence_wrappers(self):
         prompt = kernelpilot.build_prompt(self.workspace, base_task())

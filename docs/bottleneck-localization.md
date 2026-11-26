@@ -19,6 +19,15 @@ Machine-readable form: `runs/bottleneck-screen.json`, validated against
 required` when the task must produce one; the default `auto` validates it only
 when present. See [evidence-format.md](evidence-format.md).
 
+**Where this is enforced, and where it is not.** KernelPilot checks the record
+in `verify` and at the end of `run`. With `required`, a missing or malformed
+screen fails those checks. Nothing prevents an agent from starting a deep dive
+before writing the screen: this is a gate on finishing and on promoting a
+candidate, not a pre-flight interlock, and the prompt's ordering instruction is
+an instruction, not a program check. Do not describe it as program-level
+prevention of an early experiment — an unenforced order that is documented as
+enforced is worse than a documented gate.
+
 ## Step 1: the six-layer screen
 
 For each layer record four things: current evidence, whether it is worth
@@ -138,24 +147,102 @@ change". Record the class in `change_class.kind`.
 type, repeats, warmup, synchronization. That is a different claim from a
 performance change and must not be reported as one.
 
-The practical test: if the source and the config and the compiler are all fixed
-and the number still moves, the change is in runtime or in measurement. Say
-which, and if you cannot, say that you cannot.
+A gain with two sources needs three numbers, not two subtractions. When a
+candidate rewrites source *and* the autotuner now selects a different
+configuration, report:
+
+1. the source A/B at a pinned configuration — the semantic change;
+2. the configuration comparison at fixed source — the config change;
+3. the deployed combination, which is what will ship.
+
+The fixed-config control separates the two causes; it does not license adding
+them. Source, configuration and code generation can interact — a rewrite can
+make a tile size viable that was not viable before — so `1 + 2` need not equal
+`3`. Report the three numbers and say whether they add up; do not present the
+difference as an isolated contribution.
+
+If source, configuration and compiler are all fixed and the number still moves,
+the cause has not been identified. Execution time can also change with
+
+- input content or data-dependent branches, even at fixed shapes;
+- clock, power state, temperature and throttling;
+- other work on the device or the host (concurrency, other tenants);
+- allocator state, cache state and page mapping;
+- run-to-run statistical variation beyond the reported spread.
+
+The honest sentence is "execution time changed and the cause is not yet
+identified", followed by whatever control would separate runtime from
+measurement. "It must be runtime or measurement" is a two-way guess dressed as a
+conclusion.
+
+## What "it passed" means
+
+Three different results wear the word "validated". Keep them apart in the report:
+
+| Result | Established by | Does not establish |
+|---|---|---|
+| Consistency | Variant A against variant B from the same worktree, same inputs | Correctness: both can be wrong in the same way |
+| Regression | The repository's own test suite, at its recorded revision | Accuracy against a reference: the suite may encode the current behavior |
+| Accuracy | An independent high-precision reference, or the contracted tolerance check | That a speedup exists, or that the result generalizes to other shapes |
+
+A run may report any two and not the third. A reference check that was not run,
+was skipped for missing data, or failed is reported as exactly that; it is not
+rewritten as a pass, and it is not replaced by a consistency result.
+
+## Counting the right unit
+
+Per-program work, per-launch work and host submission are three different
+quantities, and the metric usually measures only the last:
+
+- **Program**: one work item in the grid. A kernel with a larger grid does more
+  program-level work even when each program is identical.
+- **Launch**: one kernel launch. Batching four calls into one submission changes
+  this count, not the per-program count.
+- **Submission / host side**: the call, its argument marshalling, its
+  synchronization and its enqueue cost.
+
+A repeated-measurement batch is a timing policy, not a launch change. Before
+attributing a delta to "fewer launches", state which of the three counts actually
+changed, and show the record that proves it.
 
 ## Attribution strength
 
-State the level reached. Do not claim above it.
+Two things are often conflated here: how well the comparison was controlled, and
+how deep the observation went. They are separate axes, and neither is a
+substitute for the other. A counter reading taken without a control is a
+measurement, not a causal claim; a clean A/B with no artifact evidence is a solid
+timing result, not a mechanism.
+
+Control axis — state the level reached and do not claim above it:
 
 | Level | What is shown | The strongest honest sentence |
 |---|---|---|
 | L0 | Correlation in one configuration | "The change is associated with a lower median in this configuration" |
 | L1 | Single-variable A/B, alternating order, repeats, raw samples | "With this variable changed and the rest held fixed, the median moved by X" |
-| L2 | L1 plus a fixed-config control separating the semantic change from a config switch | "Of the X, Y comes from the source change and Z from the configuration switch" |
+| L2 | L1 plus a fixed-config control separating the semantic change from a config switch | "At fixed configuration the source change moved the median by X; at fixed source the configuration change moved it by Y; the deployed combination moved it by Z" |
 | L3 | L2 plus an artifact-level observation that matches the predicted mechanism | "The named stage product changed in the predicted direction" |
-| L4 | A resource or counter observation inside its documented scope | "The measured unit activity changed within the scope of that counter" |
 
-L4 is unavailable in many S60 runs. That is a capability limit, not a reason to
-promote an L1 result to a mechanism claim.
+Observation axis — a separate record, not a higher level:
+
+| Observation | What it establishes |
+|---|---|
+| Static counts in a stage (transposes, waits, barriers, allocations) | That the compiled text contains fewer or more of those constructs |
+| Device image or disassembly | That the emitted code differs, within what the disassembler resolved |
+| A hardware counter or a resource reading | Activity of the measured unit **within that counter's documented scope** |
+
+A counter observation is not a stronger causal claim than a controlled A/B. It
+says the unit did more or less of something; whether that is why the time moved
+is a further inference, and on this backend the counters were often unavailable
+altogether. Depth of observation and strength of attribution are recorded in
+separate fields, and a run that has one should not be described with the other.
+
+In the record these are `attribution.control_level` and `attribution.observation`,
+and `attribution.scope_note` is required as soon as a counter is cited. A gain
+with two sources adds `decomposition` with its three numbers and a `relationship`
+of `additive`, `not-additive` or `unknown`.
+
+L3 and the observation axis are unavailable in many S60 runs. That is a
+capability limit, not a reason to promote an L1 result to a mechanism claim.
 
 Inferences this repository has already made and corrected — do not repeat them:
 

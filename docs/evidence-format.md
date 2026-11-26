@@ -58,6 +58,22 @@ were addressed and that a selected deep dive is falsifiable in form. It cannot
 decide whether the cited evidence is sufficient or whether a natural-language
 attribution overreaches, and it must not be reported as if it could.
 
+The check runs in `verify` and at the end of `run`, so it gates completion and
+promotion, not the order in which the agent works. It is not a pre-flight
+interlock and must not be described as one.
+
+Two optional blocks record attribution honestly:
+
+- `attribution` keeps the two axes apart. `control_level` is `L0`–`L3` (how well
+  the comparison was controlled); `observation` is `none`, `static-counts`,
+  `device-image` or `counter` (how deep the evidence reaches). A `counter`
+  reading requires `scope_note`, because a counter says what a unit did inside
+  its documented scope, not why the time moved.
+- `decomposition` records the three numbers for a gain with two sources:
+  `source_at_fixed_config`, `config_at_fixed_source`, `deployed_combination`,
+  plus `relationship` (`additive`, `not-additive`, or `unknown`). `unknown` is
+  the honest default; subtracting one delta from another is not a decomposition.
+
 ## Compiler-artifact identity
 
 `scripts/compile_artifacts.py` writes a manifest of artifact identity and a
@@ -69,7 +85,14 @@ reports no operation counts and no semantic equivalence.
 
 `stage_hint` is a filing label, not proof of IR dialect, and a differing byte
 range is not proof of differing machine instructions. Both are stated in the
-output's `unresolved` list. When neither side contributes a device image — the
+output's `unresolved` list. Pairing is reported as `match_quality`: an
+`exact-path` pair shares its relative path, while a `name-only` pair was matched
+across directories because the filename was unique on both sides. A `name-only`
+pair carries an `unresolved` entry saying the two files may be different
+specializations of one kernel; one kernel name can produce several cache entries
+whose artifacts are not interchangeable. A filename that stays repeated on
+either side is never paired and appears in `summary.ambiguous_names`.
+When neither side contributes a device image — the
 dump stopped before linking, or the fatbin was never captured — the comparison
 adds an `unresolved` entry saying no device binary was compared, so an
 `identical` count on text stages is never read as an instruction-level result.

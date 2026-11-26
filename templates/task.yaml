@@ -102,6 +102,7 @@ analysis:
   profiling: auto
   reference_profile_comparison: auto
   low_level_artifacts: auto
+  bottleneck_screen: auto          # runs/bottleneck-screen.json; required = must exist
   ai_profile_fallback: true
   extensions:
     tle: disabled                    # default: this task does not involve TLE

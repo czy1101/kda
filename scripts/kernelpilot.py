@@ -81,6 +81,15 @@ DEEP_DIVE_FIELDS = (
     "stop",
 )
 CHANGE_CLASSES = ("kernel", "config", "compiler", "runtime", "measurement", "none")
+CONTROL_LEVELS = ("L0", "L1", "L2", "L3")
+OBSERVATION_KINDS = ("none", "static-counts", "device-image", "counter")
+DECOMPOSITION_FIELDS = (
+    "source_at_fixed_config",
+    "config_at_fixed_source",
+    "deployed_combination",
+    "relationship",
+)
+DECOMPOSITION_RELATIONSHIPS = ("additive", "not-additive", "unknown")
 REQUIRED_TOP_LEVEL = (
     "version",
     "task",
@@ -1474,6 +1483,48 @@ def validate_bottleneck_screen(record: Any) -> list[str]:
             evidence = change_class.get("evidence")
             if not isinstance(evidence, str) or not evidence.strip():
                 errors.append("change_class.evidence must be a non-empty string")
+
+    # The two attribution axes are recorded apart on purpose: a deeper
+    # observation is not a stronger causal claim. The validator can only check
+    # that a counter reading carries the scope statement the method requires.
+    attribution = record.get("attribution")
+    if attribution is not None:
+        if not isinstance(attribution, dict):
+            errors.append("attribution must be an object")
+        else:
+            level = attribution.get("control_level")
+            if level is not None and level not in CONTROL_LEVELS:
+                errors.append(
+                    f"attribution.control_level must be one of {', '.join(CONTROL_LEVELS)}"
+                )
+            observation = attribution.get("observation")
+            if observation is not None and observation not in OBSERVATION_KINDS:
+                errors.append(
+                    f"attribution.observation must be one of {', '.join(OBSERVATION_KINDS)}"
+                )
+            elif observation == "counter":
+                scope = attribution.get("scope_note")
+                if not isinstance(scope, str) or not scope.strip():
+                    errors.append(
+                        "attribution.scope_note must state the counter's scope when "
+                        "observation is counter"
+                    )
+
+    decomposition = record.get("decomposition")
+    if decomposition is not None:
+        if not isinstance(decomposition, dict):
+            errors.append("decomposition must be an object")
+        else:
+            for field in DECOMPOSITION_FIELDS:
+                value = decomposition.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(f"decomposition.{field} must be a non-empty string")
+            relationship = decomposition.get("relationship")
+            if relationship not in DECOMPOSITION_RELATIONSHIPS:
+                errors.append(
+                    "decomposition.relationship must be one of "
+                    f"{', '.join(DECOMPOSITION_RELATIONSHIPS)}"
+                )
     return errors
 
 
@@ -1635,18 +1686,28 @@ def build_prompt(
     agent_label = "OpenCode" if agent == "opencode" else "Codex"
     knowledge_instruction = ""
     if task.get("target", {}).get("backend") == "gcu":
+        # `disabled` means the screen is neither required nor asked for: the
+        # prompt must not instruct the agent to produce a record that the
+        # evidence gate will then ignore.
+        screen_policy = (task.get("analysis") or {}).get("bottleneck_screen", "auto")
+        screen_instruction = (
+            ""
+            if screen_policy == "disabled"
+            else f"""Every diagnose stage must follow {KDA_ROOT / 'docs/bottleneck-localization.md'}:
+screen the six layers, then select one deep dive instead of collecting every
+artifact. Write the screen and the selected experiment to
+{BOTTLENECK_SCREEN.as_posix()} before you spend a device run on it.
+"""
+        )
+        compiler_instruction = f"""When the question is about generated code, lowering or a stage artifact, read
+{KDA_ROOT / 'docs/enflame-compiler-diagnostics.md'}.
+"""
         knowledge_instruction = f"""
 Read the Enflame knowledge index at {KDA_ROOT / 'knowledge/enflame/README.md'}
 and only the cards relevant to this target, language and measured bottleneck.
 Also read the S60 runbook at {KDA_ROOT / 'docs/enflame-s60-runbook.md'} for
 device allocation, staged measurement, A/B, TLE, and knowledge-update rules.
-Every diagnose stage must follow {KDA_ROOT / 'docs/bottleneck-localization.md'}:
-screen the six layers, then select one deep dive instead of collecting every
-artifact. Write the screen and the selected experiment to
-{BOTTLENECK_SCREEN.as_posix()} before you spend a device run on it. When the
-question is about generated code, lowering or a stage artifact, also read
-{KDA_ROOT / 'docs/enflame-compiler-diagnostics.md'}.
-Record applicable card IDs and environment differences in docs/plan.md.
+{screen_instruction}{compiler_instruction}Record applicable card IDs and environment differences in docs/plan.md.
 Historical observations suggest hypotheses, not current compatibility or
 performance guarantees. Revalidate in the contracted environment; knowledge
 does not override tool discovery, skill routing, constraints or evidence gates.

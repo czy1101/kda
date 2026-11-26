@@ -142,6 +142,58 @@
         "weakest_link": {"type": "string"}
       }
     },
+    "attribution": {
+      "type": "object",
+      "description": "Optional record of two separate axes: how well the comparison was controlled, and how deep the observation went. Neither implies the other, so a counter reading is not recorded as a stronger level than a controlled A/B.",
+      "additionalProperties": true,
+      "properties": {
+        "control_level": {
+          "type": "string",
+          "enum": ["L0", "L1", "L2", "L3"],
+          "description": "L0 correlation, L1 single-variable A/B, L2 A/B plus a fixed-config control, L3 L2 plus an artifact observation matching the predicted mechanism."
+        },
+        "observation": {
+          "type": "string",
+          "enum": ["none", "static-counts", "device-image", "counter"],
+          "description": "How deep the evidence reaches. Recorded separately from control_level."
+        },
+        "scope_note": {
+          "type": "string",
+          "description": "Required when observation is counter: the counter's documented scope, and what the reading does not cover."
+        }
+      }
+    },
+    "decomposition": {
+      "type": "object",
+      "description": "Optional three-number record for a gain with more than one source. Subtracting one number from another is not a decomposition: source, configuration and code generation can interact.",
+      "additionalProperties": true,
+      "required": [
+        "source_at_fixed_config",
+        "config_at_fixed_source",
+        "deployed_combination",
+        "relationship"
+      ],
+      "properties": {
+        "source_at_fixed_config": {
+          "type": "string",
+          "description": "The semantic delta measured against the same source at a pinned configuration."
+        },
+        "config_at_fixed_source": {
+          "type": "string",
+          "description": "The configuration delta measured at fixed source."
+        },
+        "deployed_combination": {
+          "type": "string",
+          "description": "What the shipping combination measured."
+        },
+        "relationship": {
+          "type": "string",
+          "enum": ["additive", "not-additive", "unknown"],
+          "description": "Whether the two deltas add up to the deployed result. 'unknown' is a valid answer and is the honest default."
+        },
+        "note": {"type": "string"}
+      }
+    },
     "not_pursued": {
       "type": "array",
       "description": "Directions deliberately dropped, with the reason. Keeps a later reader from re-running a decision that was already made.",
