@@ -30,7 +30,8 @@
 
 ## Scope and status
 
-- Observation date and review date: observed 2026-11-17, reviewed 2026-11-17.
+- Observation date and review date: observed 2026-11-17, reviewed 2026-11-17;
+  revised 2026-11-26 (change class, evidence level).
 - Device/backend/architecture: Enflame S60 / GCU300, GCU backend.
 - Framework, compiler, SDK/driver and device-library versions: Enflame Triton 3.6.0,
   `torch_gcu`; driver/SDK not established by this card.
@@ -42,8 +43,10 @@
   chunked GLA forward; the masked operand is a strictly causal `[BT, BT]` block
   with `i >= j` ownership.
 - Status: performance-observed; the transfer/select lowering cause is inferred;
-  the transpose rewrite is numerically validated; mask-removal exactness is
-  conditional on the producer writing the complete `[BT,BT]` block (`NC=1` here).
+  the transpose rewrite is numerically validated **against the other variant in
+  the same worktree**, which is a consistency result, not an independent
+  accuracy result; mask-removal exactness is conditional on the producer writing
+  the complete `[BT,BT]` block (`NC=1` here).
 
 ## Observed facts
 
@@ -140,12 +143,34 @@ contracted call with alternating A/B rounds and retain raw samples.
 
 - See [S60-TRITON-014](triton-shared-transpose-materialization.md) for the
   shared-memory accounting of the key-major FP32 gate tile: the time-major
-  form removes a 32K+32K shared transpose pair.
+  form removes a 32K+32K shared transpose pair at `BK=128`, `BT=64`. That pair
+  is an allocation-ledger entry, not a proven residency peak.
 - Removing an operand-preparation cost can change the autotuner's selected
   configuration (here the output kernel moved from BK=128 to 256). Report the
   deployed auto-config delta and a fixed-config control; only the fixed-config
   delta isolates the semantic change. In this operator the config switch was
   worth about 0.4 percentage points, inside the four-pair batch volatility.
+
+## Change class and evidence level (2026-11-26)
+
+Both patterns are **kernel source** changes. The first also moved the autotuner's
+selected configuration (`BK=128` to `256`), which is a **configuration** change:
+the deployed 2.30% contains roughly 0.4 percentage points of config switch and
+1.86% of semantic change at fixed config. Neither is a **compiler** change. No
+pass, rule or toolchain file was modified in that run, so nothing here supports a
+statement about compiler behavior beyond what the artifacts showed.
+
+The four alternating pairs are a measurement repetition policy. They do not
+change the grid, the program count or the host submission structure, so they say
+nothing about launch batching. Per-program cost, per-launch cost and host-side
+submission batches are three different quantities; see
+[S60-TRITON-012](triton-per-program-cost.md).
+
+The numerical claims have three distinct strengths and they must not be
+interchanged: the two variants agree elementwise (consistency), the repository's
+own regression tests passed (regression), and no independent high-precision
+reference was run for the full operator in this task. A mask-removal audit found
+two caller families that would break, which is why the dispatch guard exists.
 
 ## Sources
 

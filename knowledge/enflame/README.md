@@ -1,14 +1,21 @@
 # Enflame S60 / GCU300 optimization knowledge
 
-Last reviewed: 2026-10-27. Scope: local S60/GCU300 observations, not every
+Last reviewed: 2026-11-26. Scope: local S60/GCU300 observations, not every
 Enflame device or future compiler release. Searchable metadata lives in
 [catalog.json](catalog.json); original artifact paths and SHA256 digests live
 in [sources.json](sources.json). Raw logs are not copied into this repository.
+
+Start with [../../docs/bottleneck-localization.md](../../docs/bottleneck-localization.md)
+when the question is "where is the time going", and with
+[../../docs/enflame-compiler-diagnostics.md](../../docs/enflame-compiler-diagnostics.md)
+when the question is "what did the compiler emit". The cards below supply the
+observations those two procedures consume.
 
 ## Select a starting point
 
 | Symptom / question | Card | Language | Evidence scope |
 |---|---|---|---|
+| Which compiled artifact did the timed call actually use, and what does a cache key prove? | [S60-COMPILER-001: artifact identity](compiler-artifact-identity.md) | Triton | Five-stage chain across three compilers, in-process versus external boundaries, specialization-attribute cache entries, registered versus executed versus effective passes |
 | Which local dot shapes select convgen; BF16 final storage versus dot-result type | [S60-TRITON-001: convgen selection](triton-convgen.md) | Triton | Bounded N/K32 or N/K16 rule; masked tails, loops and storage controls; frontend/local-IR gates distinguished |
 | Compute/DTE paths; affine payloads and structural metadata coordinates | [S60-TRITON-002: computation and memory paths](triton-compute-memory-paths.md) | Triton | Runtime-linked calls/ISA; immutable bases, scalar offsets and safe post-load masks; bounded tl.load/tle.load linked-code equivalence; physical utilization unmeasured |
 | Which expressions trigger matrix, vector, special-function and structured-page transfer paths? | [S60-TRITON-005: independent hardware trigger probes](triton-hardware-trigger-probes.md) | Triton | 53 configurations; matched calls/ISA; stable page-transfer comparison and unstable matrix repeats |
@@ -26,7 +33,7 @@ in [sources.json](sources.json). Raw logs are not copied into this repository.
 | Sparse metadata, stable device radix, packed exact prefixes, temporary capacity, dot/precision gates and compiler limits | [S60-TRITON-011](triton-gcu-indexing-and-compiler-limits.md) | Both | Version-scoped frontend/local-IR and runtime Tensor-tuple launcher gates; broadcast-mask runtime assertion and verified stride specialization |
 | Bounded live tiles, prefix ranks, mask layout, shared-destination ownership and weighted-mean normalization | [S60-TRITON-010](triton-live-tiles-and-output-ownership.md) | Triton | Reusable mechanisms; resource limits, epsilon rescaling, probability-output boundaries, split-call costs and external numerical evidence |
 | Many small programs, one tile per program; is the grid count itself the cost? | [S60-TRITON-012: per-program cost](triton-per-program-cost.md) | Triton | Three kernels at two grid sizes, one-unit batching A/B, batch-4 regression, neutral warp/transfer ablations and a context-dependent single-point replay |
-| Key-major FP32 gate tile shows a 64 KiB shared footprint; time-major is 32 KiB | [S60-TRITON-014: shared transpose materialization](triton-shared-transpose-materialization.md) | Triton | Same-worktree TTIR/GCUIR/LLIR/fatbin, shared-allocation accounting, 14.75% kernel A/B and a state-scan hash-only control |
+| Key-major FP32 gate tile materializes a 32K+32K shared transpose pair; time-major leaves only the BF16 pair | [S60-TRITON-014: shared transpose materialization](triton-shared-transpose-materialization.md) | Triton | Same-worktree TTIR/GCUIR/LLIR/fatbin, shared-allocation ledger kept separate from metadata `shared`, 14.75% kernel A/B and a state-scan hash-only control |
 | Consumer re-masks a producer-masked operand, or reads a transposed tile through a strided key-major pointer | [S60-TRITON-013: operand preparation](triton-operand-preparation.md) | Triton | Exact-rewrite numerics, per-kernel A/B deltas and related neutral load-spelling evidence |
 
 ```bash

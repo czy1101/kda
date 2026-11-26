@@ -1,12 +1,43 @@
 {
   "version": 1,
-  "reviewed_on": "2026-10-27",
+  "reviewed_on": "2026-11-26",
   "target": {
     "backend": "gcu",
     "device": "S60",
     "arch": "gcu300"
   },
   "cards": [
+    {
+      "id": "S60-COMPILER-001",
+      "path": "compiler-artifact-identity.md",
+      "languages": [
+        "triton"
+      ],
+      "keywords": [
+        "compile chain",
+        "stage ownership",
+        "add_stages",
+        "process boundary",
+        "artifact identity",
+        "cache key",
+        "registered versus executed pass",
+        "MLIR_ENABLE_DUMP",
+        "offload bundle",
+        "fatbin",
+        "five stages",
+        "three compilers",
+        "specialization attribute",
+        "declaration versus call site"
+      ],
+      "status": "compiler-observed",
+      "summary": "Artifact identity on S60 is a tuple of kernel, source, specialization, selected config, toolchain hashes and per-stage hashes; the Triton cache key is not part of it. ttir/ttgir/gcuir run in-process, llir and fatbin in external vendor processes, and registered, executed and effective passes are three different facts.",
+      "sources": [
+        "s60-compile-chain-v2",
+        "s60-compile-chain-errata",
+        "gla-r2-attr-compiler-ir-baseline",
+        "gla-r2-attr-compiler-ir-c009"
+      ]
+    },
     {
       "id": "S60-TRITON-001",
       "path": "triton-convgen.md",
@@ -452,18 +483,23 @@
         "triton"
       ],
       "keywords": [
-        "profiling",
-        "compiler artifacts",
+        "attribution strength",
+        "change class",
         "cold compile",
-        "warm cache",
-        "timer",
-        "synchronization",
+        "compiler artifacts",
+        "consistency versus accuracy",
         "correctness",
-        "memory",
-        "same-process controls",
+        "evidence chain",
+        "framework training boundary",
         "launch fingerprints",
+        "memory",
         "null control",
-        "framework training boundary"
+        "profiling",
+        "same-process controls",
+        "synchronization",
+        "timer",
+        "verification level",
+        "warm cache"
       ],
       "status": "workflow-guidance-supported-by-local-observations",
       "sources": [
@@ -480,7 +516,8 @@
         "gla-same-process-launch-controls-raw",
         "gla-isolated-framework-primitives",
         "gla-native-application-diagnosis"
-      ]
+      ],
+      "summary": "Interpretation rules for paths, artifacts, runtime costs and hardware claims: evidence levels, the source-artifact-execution-performance chain, the five change classes, and the separation of consistency, regression and accuracy."
     },
     {
       "id": "S60-TRITON-006",
@@ -1073,21 +1110,24 @@
         "triton"
       ],
       "keywords": [
-        "redundant mask",
-        "tl.where",
-        "producer masked",
-        "operand preparation",
-        "strided block pointer",
-        "key-major load",
-        "in-kernel transpose",
-        "tl.trans",
         "BF16 cast",
-        "packed head stride",
+        "change class",
+        "consistency versus accuracy",
+        "fixed-config control",
+        "in-kernel transpose",
+        "key-major load",
         "narrow segments",
+        "operand preparation",
+        "packed head stride",
+        "producer masked",
+        "redundant mask",
+        "strided block pointer",
+        "tl.trans",
+        "tl.where",
         "transfer shape"
       ],
       "status": "performance-observed",
-      "summary": "Two operand-preparation costs with identical arithmetic: a consumer-side mask that repeats the producer's zeros, and key-major narrow-segment reads that a time-major contiguous load plus in-kernel transpose replaces. Removing the mask can also change the autotuner's selected BK, so auto and fixed-config controls must be reported separately.",
+      "summary": "Two operand-preparation costs with identical arithmetic: a consumer-side mask that repeats the producer's zeros, and key-major narrow-segment reads that a time-major contiguous load plus in-kernel transpose replaces. Removing the mask can also change the autotuner's selected BK, so auto and fixed-config controls must be reported separately; both patterns are kernel-source changes, not compiler changes.",
       "sources": [
         "gla-r2-benchmark-ledger",
         "gla-r2-candidate-ledger",
@@ -1107,21 +1147,28 @@
         "triton"
       ],
       "keywords": [
-        "shared memory",
-        "transpose",
-        "key-major",
-        "time-major",
-        "block pointer",
+        "BK=128 BT=64",
         "FP32 gate",
-        "layout conversion",
-        "local state",
-        "gcuir",
-        "fatbin",
+        "barrier",
+        "block pointer",
+        "cache key is not device code",
         "dma wait",
-        "barrier"
+        "fatbin",
+        "gcuir",
+        "key-major",
+        "layout conversion",
+        "liveness",
+        "local state",
+        "metadata shared",
+        "revision narrowed",
+        "shared allocation ledger",
+        "shared memory",
+        "time-major",
+        "transpose",
+        "transpose_start"
       ],
       "status": "performance-observed",
-      "summary": "Key-major FP32 block-pointer tiles consumed by a broadcast elementwise op can materialize a 32K+32K shared transpose pair; loading the tile time-major keeps it local and leaves only the BF16 dot-operand transpose, dropping shared memory from 64 KiB to 32 KiB.",
+      "summary": "Key-major FP32 block-pointer tiles consumed by a broadcast elementwise op can materialize a shared transpose pair (128x64 FP32, 32K+32K at BK=128/BT=64); loading the tile time-major keeps it local and leaves only the BF16 dot-operand transpose. The shared-allocation ledger is not a residency peak, and metadata shared is not the physical reservation.",
       "sources": [
         "gla-r2-attr-compiler-doc",
         "gla-r2-attr-compiler-ir-baseline",

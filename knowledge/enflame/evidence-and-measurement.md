@@ -141,3 +141,44 @@ line-number shift is enough to change the cache key.
 
 Sources: `gla-r2-attr-compiler-doc`, `gla-r2-attr-compiler-ir-baseline`,
 `gla-r2-attr-compiler-ir-c009`.
+
+## The four-link chain and the five change classes (2026-11-26)
+
+Treat a causal claim as a chain with four links: **source**, **compiled
+artifact**, **actual execution**, **performance change**. Each link needs its own
+proof, and a claim may not borrow strength from a link that was never
+established:
+
+| Link | Proof needed | Typical break |
+|---|---|---|
+| Source | File, revision, `constexpr` and launch values | Two revisions of the same kernel name |
+| Artifact | Identity of the specialization that ran, plus artifact hashes | "The" cache entry was a different specialization |
+| Execution | Launch record tied to that same specialization | Artifact changed but the timed call used the old one |
+| Performance | Same-contract A/B, same device, input, warmup, timed region | Warm candidate versus cold baseline |
+
+Classify every candidate before reporting it, because the four classes are
+measured differently and one is not the other: **kernel** (source),
+**config** (tile/warps/stages/autotune selection or launcher options),
+**compiler** (version, flags, passes, rules), **runtime** (submission,
+allocation, synchronization, module load, host launcher, timed region). Add
+**measurement** for the case where only the timer, repeats or warmup changed.
+A source rewrite whose gain partly comes from the autotuner switching
+configuration is kernel plus config, reported as two numbers.
+
+Separate the three strengths of a numerical result: variants agreeing with each
+other is **consistency**, the repository suite passing is **regression**, and an
+independent high-precision reference passing is **accuracy**. They are not
+interchangeable, and a scope that was only checked for finite outputs and
+plausible magnitude is none of the three. A check that failed, was skipped, or
+still needs re-running is never written as PASS; a criterion that was set too
+strictly is reported as a criterion error, not as a numerical failure.
+
+Negative results and their bounds belong in the record with the same weight as
+wins: an unchanged median under a changed spelling, a rejected vectorization, a
+measured regression all constrain what the next candidate may assume. State the
+range in which a result holds (shape, dtype, tile, compiler version) instead of
+generalizing from the one configuration that was measured.
+
+Sources: the measurement sections above; the classification and chain wording
+follow the runbooks in `docs/bottleneck-localization.md` and
+`docs/enflame-compiler-diagnostics.md`.

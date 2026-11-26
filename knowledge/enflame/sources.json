@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewed_on": "2026-11-20",
+  "reviewed_on": "2026-11-26",
   "path_base": "directory containing this manifest",
   "note": "External local evidence pointers only; not bundled or guaranteed available on another machine. Hashes pin the reviewed artifacts, not current task compatibility.",
   "sources": [
@@ -3162,6 +3162,24 @@
       "sha256": "2adfdd83399f5ea9ed3f014e6f2adec1d4f9c01c06eff291ef56085035bd301a",
       "bytes": 2612,
       "available_on_review": true
+    },
+    {
+      "id": "s60-compile-chain-v2",
+      "path": "/data/hjq/s60-compile-chain.20261123T1727/review.20261124T0944/S60_COMPILE_CHAIN.md",
+      "sha256": "5f9eb155d5b349d2c63ae732e83b9bd4925227d7e3341edfde7c77cf1767209d",
+      "bytes": 42318,
+      "available_on_review": false,
+      "kind": "compile-chain-review",
+      "note": "Reviewed copy of the S60 compile-chain v2 document. Not bundled with this repository and not reachable from it; the path is the original S60 review directory, and the digest was computed from the copy read for this revision. Stage names, pass counts and tool paths are scoped to that installation."
+    },
+    {
+      "id": "s60-compile-chain-errata",
+      "path": "/data/hjq/s60-compile-chain.20261123T1727/review.20261124T0944/ERRATA.md",
+      "sha256": "f4b850424f9b4118475318f22b390916411a3b9218bb3cba76e1d45f653df6f5",
+      "bytes": 11986,
+      "available_on_review": false,
+      "kind": "errata",
+      "note": "Errata for the same review (process parentage, tops_* census, warp_size and max_shared provenance, pass-registration versus execution). Digest computed from the copy read for this revision."
     }
   ]
 }
