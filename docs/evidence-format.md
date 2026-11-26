@@ -74,6 +74,16 @@ Two optional blocks record attribution honestly:
   plus `relationship` (`additive`, `not-additive`, or `unknown`). `unknown` is
   the honest default; subtracting one delta from another is not a decomposition.
 
+## Interface assessment
+
+There is no ledger for the implementation means. `runs/tle-assessment.json` is the
+only machine-readable interface assessment, it exists only when the task policy
+enables TLE, and it covers documented semantics and the local interface (the first
+two capability gates) only. The means, the eight items each candidate states, and
+the five gate results belong in `docs/plan.md`; nothing validates them, and
+`runs/candidates.jsonl` has no field for them. See
+[enflame-interface-assessment.md](enflame-interface-assessment.md).
+
 ## Compiler-artifact identity
 
 `scripts/compile_artifacts.py` writes a manifest of artifact identity and a

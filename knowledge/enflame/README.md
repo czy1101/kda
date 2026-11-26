@@ -6,10 +6,12 @@ Enflame device or future compiler release. Searchable metadata lives in
 in [sources.json](sources.json). Raw logs are not copied into this repository.
 
 Start with [../../docs/bottleneck-localization.md](../../docs/bottleneck-localization.md)
-when the question is "where is the time going", and with
+when the question is "where is the time going", with
 [../../docs/enflame-compiler-diagnostics.md](../../docs/enflame-compiler-diagnostics.md)
-when the question is "what did the compiler emit". The cards below supply the
-observations those two procedures consume.
+when the question is "what did the compiler emit", and with
+[../../docs/enflame-interface-assessment.md](../../docs/enflame-interface-assessment.md)
+when the question is "how should the change be written, and does that interface
+work here". The cards below supply the observations those three procedures consume.
 
 ## Select a starting point
 

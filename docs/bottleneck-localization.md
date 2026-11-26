@@ -81,6 +81,25 @@ reason written down.
 record it and finish with an evidence-backed stop rather than inventing a
 candidate.
 
+## Handing the direction to strategy selection
+
+This document ends at the direction. It deliberately does not say how to write
+the change, because three vocabularies are in play and they are not one list:
+
+- a **layer** (this page, step 1) is a place to look;
+- a **change class** (`change_class.kind`, below) is what the candidate edits;
+- an **implementation means** — standard Triton, TLE, Gluon, intrinsic or inline
+  assembly — is the interface the edit is written in.
+
+A direction names the layer. It does not choose the class, and it does not choose
+the means. The means list above is a vocabulary, not a capability report: only
+standard Triton is available by default, TLE needs an explicit task policy, and
+nothing in this repository probes or routes Gluon or inline assembly. For the
+means, the per-candidate items that must be written before implementation, and
+the five capability gates that must pass before a candidate depends on one, see
+[enflame-interface-assessment.md](enflame-interface-assessment.md). Those records
+live in `docs/plan.md` and no gate reads them.
+
 ## The experiment contract
 
 Every experiment states six things before it runs. The schema requires them for

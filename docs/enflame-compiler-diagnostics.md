@@ -233,6 +233,14 @@ Two examples from the S60 GLA work, both of which were initially mis-attributed:
   `triton_gcu.matmul` strings were region border markers. Absence of a token is
   not absence of an operation.
 
+The artifacts answer *where* to change. They do not answer *how to write it*.
+Changing the compiler is a change class, not an implementation means: it sits
+beside `kernel`, `config` and `runtime`, while the means — standard Triton, TLE,
+Gluon, inline assembly — says which interface the kernel body is written in.
+Step 5 of [agent-flow.md](agent-flow.md) chooses the two separately, and
+[enflame-interface-assessment.md](enflame-interface-assessment.md) carries the
+means table and the capability gates that precede implementation.
+
 ## 6. Gate for actually modifying the compiler
 
 This repository does not authorize compiler changes. Source and configuration

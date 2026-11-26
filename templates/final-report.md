@@ -30,6 +30,16 @@
 List every candidate, including rejected and failed attempts, with its
 hypothesis, result, decision, reason, and rollback status.
 
+## Strategy and interface assessment
+
+- Diagnostic layer each candidate targeted, and its change class:
+- Implementation means used, per candidate:
+- Capability gates reached for that means — documented semantics, local interface,
+  target compile, correct run, workload gain — and the gate that failed when one did:
+- Means considered and not used, with the measured reason:
+- For a means beyond the operator's existing implementation: the version it was
+  validated against, and whether anything was compiled or measured on a device
+
 ## Analysis summary
 
 - Detected backend and environment:
