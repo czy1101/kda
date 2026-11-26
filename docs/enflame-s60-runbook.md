@@ -77,6 +77,24 @@ while full-operator latency decreases by at least the measured share of that
 phase". A hypothesis that cannot be contradicted by the next measurement is not
 ready.
 
+Choosing which stage to measure is itself a decision. Use
+[bottleneck-localization.md](bottleneck-localization.md): screen the six layers
+from evidence you already have, then run one diagnosis that can change what the
+run does next. Collecting every artifact is not a substitute for that choice, and
+a layer may legitimately be marked not applicable.
+
+When the hypothesis is about generated code, follow
+[enflame-compiler-diagnostics.md](enflame-compiler-diagnostics.md). Establish the
+installed chain first, keep the identity of the specialization that actually ran,
+and compare artifacts by hash rather than by eyeballing a diff. Identity can be
+indexed offline, without the device:
+
+```bash
+python3 scripts/compile_artifacts.py index \
+  --root <artifact-dir> --expect ttir,ttgir,gcuir,llir,fatbin \
+  --out runs/compile-artifacts.json
+```
+
 Keep the evidence classes separate:
 
 | Evidence | What it supports | What it does not support |

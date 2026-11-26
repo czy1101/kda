@@ -82,7 +82,9 @@ For every kernel optimization task:
 2. Inspect the implementation and reference.
 3. Verify correctness.
 4. Establish baseline performance.
-5. Profile the current bottleneck when needed.
+5. Profile the current bottleneck when needed. Diagnosis is two-step: screen the
+   six layers, then select one deep dive that can change a decision — see
+   [docs/bottleneck-localization.md](docs/bottleneck-localization.md).
 6. Write an optimization hypothesis.
 7. Implement one coherent candidate.
 8. Run correctness.
@@ -113,6 +115,8 @@ For every kernel optimization task:
 | Remote command dispatch and source synchronization | `scripts/controlled_ssh.py` |
 | OpenCode host/controller entry points | `docs/opencode.md` |
 | S60 device, measurement, and TLE rules | `docs/enflame-s60-runbook.md` |
+| How to choose a diagnosis direction and stop | `docs/bottleneck-localization.md` |
+| How to read the S60 compile chain and artifacts | `docs/enflame-compiler-diagnostics.md` |
 | "Which candidate is fastest right now" | `runs/candidates.jsonl`, `runs/benchmark.csv` |
 | Which stage the task is currently in | the task workspace, not this repository |
 | Reusable, evidence-scoped Enflame optimization observations | `knowledge/enflame/` (raw task artifacts stay in their workspaces) |

@@ -56,6 +56,10 @@ Use simple files in the task workspace:
 - `candidates.jsonl` for candidate names, parent links, and status.
 - `profile/` for profiler output or report summaries.
 - `runs/analysis-capabilities.json` for live backend-tool discovery evidence.
+- `runs/bottleneck-screen.json` for the two-step diagnosis record described in
+  [bottleneck-localization.md](bottleneck-localization.md).
+- `runs/compile-artifacts.json` and `runs/compile-artifact-diff.json` for
+  compiler-artifact identity and layered comparison.
 - `runs/` or `outputs/` for generated artifacts.
 
 The exact format is less important than consistency. A future reader should be able to reconstruct what changed, what was measured, and why a candidate was promoted.

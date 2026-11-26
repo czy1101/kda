@@ -22,8 +22,11 @@ This repository documents an early research prototype and remains under active d
 | `schemas/candidate.schema.json` | Candidate ledger record schema. |
 | `schemas/run-result.schema.json` | Structured result returned by automated agent runs. |
 | `schemas/backend.schema.yaml` | Contract for backend-to-skill routing profiles. |
+| `schemas/bottleneck-screen.schema.json` | Six-layer screen and selected deep dive written to `runs/bottleneck-screen.json`. |
+| `docs/bottleneck-localization.md` | Two-step diagnosis: screen six layers, then run one decision-changing experiment. |
 | `docs/opencode.md` | OpenCode entry points on an S60 host or a controller with SSH. |
 | `docs/enflame-s60-runbook.md` | S60 device, measurement, TLE, and evidence rules. |
+| `docs/enflame-compiler-diagnostics.md` | S60 compile-chain confirmation, artifact identity, pass localization, and the compiler-change gate. |
 | `docs/evidence-format.md` | Canonical benchmark and candidate ledger format. |
 | `docs/backend-extensions.md` | How to add a chip backend without growing prompts. |
 | `backends/` | Backend/architecture matching and stage-specific skill routing. |
@@ -31,6 +34,7 @@ This repository documents an early research prototype and remains under active d
 | `templates/task.yaml` | Fill-in task contract. |
 | `templates/operator-workspace/` | Files to drop into an operator repository. |
 | `scripts/kernelpilot.py` | Minimal task validator, environment-aware command runner, and Codex/OpenCode driver. |
+| `scripts/compile_artifacts.py` | Offline artifact identity manifest and layered comparison; no device or framework import. |
 | `scripts/controlled_ssh.py` | Allow-listed, hash-guarded adapter for execution-only GPU hosts. |
 | `CONTRIBUTING.md` | Contribution process and DCO sign-off requirements. |
 | `THIRD_PARTY_NOTICES.md` | Third-party component and license disclosures. |

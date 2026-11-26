@@ -41,6 +41,40 @@ must include a non-empty reason and rollback result. Use
 New records use `metric`, `direction`, `metric_value`, `baseline_value`, and
 `unit`; legacy latency-only fields remain accepted for older ledgers.
 
+## Bottleneck screen
+
+`runs/bottleneck-screen.json` follows
+`schemas/bottleneck-screen.schema.json` and records the two-step diagnosis from
+[bottleneck-localization.md](bottleneck-localization.md): one entry for each of
+the six layers with its evidence, disposition, key unknown and the decision the
+next experiment would support, plus at least one deep dive naming a falsifiable
+hypothesis, its control, both outcomes and its stop condition.
+
+`analysis.bottleneck_screen` controls enforcement. The default `auto` validates
+the file only when it exists, so task workspaces written before this record
+existed keep passing; `required` fails verification when it is missing;
+`disabled` ignores it. Validation is structural. It can show that all six layers
+were addressed and that a selected deep dive is falsifiable in form. It cannot
+decide whether the cited evidence is sufficient or whether a natural-language
+attribution overreaches, and it must not be reported as if it could.
+
+## Compiler-artifact identity
+
+`scripts/compile_artifacts.py` writes a manifest of artifact identity and a
+layered comparison, typically to `runs/compile-artifacts.json` and
+`runs/compile-artifact-diff.json`. It records size, SHA-256, a filename-derived
+`stage_hint`, a byte-level container kind, cache keys, offload-bundle targets,
+missing stages and unsupported files. It never writes to its inputs, and it
+reports no operation counts and no semantic equivalence.
+
+`stage_hint` is a filing label, not proof of IR dialect, and a differing byte
+range is not proof of differing machine instructions. Both are stated in the
+output's `unresolved` list. When neither side contributes a device image — the
+dump stopped before linking, or the fatbin was never captured — the comparison
+adds an `unresolved` entry saying no device binary was compared, so an
+`identical` count on text stages is never read as an instruction-level result.
+Fixtures used by its tests are test data, not device evidence.
+
 ## Checkpoints
 
 KernelPilot stores baseline and best snapshots under
