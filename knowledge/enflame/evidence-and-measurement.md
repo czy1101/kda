@@ -163,7 +163,11 @@ measured differently and one is not the other: **kernel** (source),
 allocation, synchronization, module load, host launcher, timed region). Add
 **measurement** for the case where only the timer, repeats or warmup changed.
 A source rewrite whose gain partly comes from the autotuner switching
-configuration is kernel plus config, reported as two numbers.
+configuration is kernel plus config: report the source delta at fixed
+configuration, the configuration delta at fixed source, and the deployed
+combination, and say whether the three add up. They need not — source,
+configuration and code generation interact — so a subtraction is not a
+decomposition.
 
 Separate the three strengths of a numerical result: variants agreeing with each
 other is **consistency**, the repository suite passing is **regression**, and an
@@ -172,6 +176,12 @@ interchangeable, and a scope that was only checked for finite outputs and
 plausible magnitude is none of the three. A check that failed, was skipped, or
 still needs re-running is never written as PASS; a criterion that was set too
 strictly is reported as a criterion error, not as a numerical failure.
+
+Depth of observation is not attribution strength. A hardware counter reports
+activity of the measured unit within that counter's documented scope; the
+reading does not establish that the activity caused the timing change, and an
+uncontrolled counter reading is weaker evidence than a clean A/B with alternating
+order. Record the two axes separately.
 
 Negative results and their bounds belong in the record with the same weight as
 wins: an unchanged median under a changed spelling, a rejected vectorization, a

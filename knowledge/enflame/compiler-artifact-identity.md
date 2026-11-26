@@ -39,7 +39,7 @@
   2026-11-26.
 - Device/backend/architecture: Enflame S60 / GCU300, `enflame` backend, one
   visible card (physical card 7).
-- Framework, compiler, SDK/driver and device-library versions: FlameTree Triton
+- Framework, compiler, SDK/driver and device-library versions: FlagTree Triton
   3.6.0, `torch` 2.10.0+cpu, TOPS SDK LLVM 11.0.0git, toolkit datadir
   `/opt/triton_gcu`. The package `triton_gcu` is not importable and not listed by
   `pip`; the backend is reached through the registered `enflame` entry point.

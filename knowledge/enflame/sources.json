@@ -3170,7 +3170,7 @@
       "bytes": 42318,
       "available_on_review": false,
       "kind": "compile-chain-review",
-      "note": "Reviewed copy of the S60 compile-chain v2 document. Not bundled with this repository and not reachable from it; the path is the original S60 review directory, and the digest was computed from the copy read for this revision. Stage names, pass counts and tool paths are scoped to that installation."
+      "note": "Reviewed copy of the S60 compile-chain v2 document. Not bundled with this repository and not reachable from it; the path is the original S60 review directory. The digest was computed from the copy read during the 2026-11-26 review; the file was not reachable from the machine that finalized this revision, so the digest is recorded but unverified here. Stage names, pass counts and tool paths are scoped to that installation."
     },
     {
       "id": "s60-compile-chain-errata",
@@ -3179,7 +3179,7 @@
       "bytes": 11986,
       "available_on_review": false,
       "kind": "errata",
-      "note": "Errata for the same review (process parentage, tops_* census, warp_size and max_shared provenance, pass-registration versus execution). Digest computed from the copy read for this revision."
+      "note": "Errata for the same review (process parentage, tops_* census, warp_size and max_shared provenance, pass-registration versus execution). Digest computed from the copy read during the 2026-11-26 review and not re-verified from the machine that finalized this revision."
     }
   ]
 }
