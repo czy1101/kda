@@ -272,6 +272,17 @@ properties:
         type: string
         enum: [auto, disabled, required]
         default: auto
+      bottleneck_screen:
+        type: string
+        enum: [auto, disabled, required]
+        default: auto
+        description: >
+          Policy for `runs/bottleneck-screen.json`, the six-layer screen and
+          selected deep dive described in docs/bottleneck-localization.md.
+          `required` fails evidence verification when the file is absent;
+          `auto` validates it only when present, so older task workspaces keep
+          passing; `disabled` ignores it. The check is structural: it cannot
+          judge whether the stated evidence is sufficient.
       ai_profile_fallback:
         type: boolean
         default: true

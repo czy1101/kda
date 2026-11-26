@@ -19,6 +19,38 @@ when the run stops without a performance win. Do not start a nested `codex` or
 `constraints.allowed_paths` and `constraints.forbidden_paths` are binding
 without exception.
 
+## Bottleneck localization
+
+Diagnosis is two steps, and the order is binding. At every `diagnose` stage:
+
+1. **Screen six layers briefly** and write `runs/bottleneck-screen.json`
+   (`schemas/bottleneck-screen.schema.json`): `algorithm_numerics`,
+   `operator_dataflow`, `kernel_implementation`, `launch_config_autotune`,
+   `compiler_codegen`, `runtime_system`. For each, record the evidence you
+   actually have, whether it is worth continuing, the single most
+   decision-relevant unknown, and what the next experiment would let you decide.
+   The six layers are viewpoints, not six mandatory device experiments; mark a
+   layer `not_applicable` or record insufficient evidence rather than inventing
+   an experiment for it.
+2. **Select one deep dive** and state its hypothesis, control, expected
+   observable change, both falsification conditions, the next action for each
+   outcome, and its budget and stop condition.
+
+Follow `docs/bottleneck-localization.md` for the layer table, the deep-dive
+routing rules, the four-link evidence chain, the five change classes and the
+attribution-strength levels. Do not promote a symptom into a layer's conclusion,
+and do not run an experiment whose two outcomes lead to the same next action.
+
+When the question is about generated code, also read
+`docs/enflame-compiler-diagnostics.md`. Classify the candidate as `kernel`,
+`config`, `compiler` or `runtime` in the screen; a source rewrite whose gain
+partly comes from the autotuner switching configuration is two changes and needs
+a fixed-config control.
+
+Existing evidence that already supports a candidate is enough. Stop collecting
+once the decision is made, and report the attribution level you reached instead
+of the one the story suggests.
+
 ## Execution and safety
 
 - Use KernelPilot wrappers for environment preflight, tool discovery, baseline,
@@ -100,6 +132,10 @@ tools whose live probe succeeded, and preserve their versions and failures in
 - Use kernel counters for execution-pipeline or memory questions, timelines for
   launch/synchronization/host gaps, framework tools for operator attribution,
   and compiler artifacts for lowering or generated-code questions.
+- Even without a device, compiler artifacts can be compared by identity:
+  `scripts/compile_artifacts.py index` and `compare` report stage hints, sizes,
+  hashes, container kinds, cache keys and bundle targets, and list what they
+  cannot resolve. They are not evidence about performance.
 - A successful executable probe establishes visibility only. Record capture,
   permission, export, or parsing failures and try another compatible discovered
   capability or the benchmark/source/compiler fallback.

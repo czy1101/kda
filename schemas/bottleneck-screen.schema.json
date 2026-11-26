@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KDA two-step bottleneck screen",
+  "description": "Machine-readable record of the six-layer screen and the selected deep dive described in docs/bottleneck-localization.md. KernelPilot validates this structure when analysis.bottleneck_screen is auto or required. Structural validity is not diagnostic validity: no validator can decide whether the cited evidence is sufficient or whether an attribution is overreaching.",
+  "version": 1,
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["version", "layers", "deep_dives"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "task": {
+      "type": "string",
+      "description": "Optional free-form task identifier for the reader."
+    },
+    "layers": {
+      "type": "array",
+      "description": "One entry per analysis viewpoint. Exactly the six ids below, each once. The six layers are perspectives, not six mandatory device experiments: a layer may be marked not_applicable or its evidence recorded as insufficient.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "evidence",
+          "continue",
+          "key_unknown",
+          "decision_supported"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "algorithm_numerics",
+              "operator_dataflow",
+              "kernel_implementation",
+              "launch_config_autotune",
+              "compiler_codegen",
+              "runtime_system"
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "description": "What is actually known now, with the file, command or artifact it came from. Not a plan."
+          },
+          "continue": {
+            "type": "string",
+            "enum": ["yes", "no", "not_applicable"],
+            "description": "Whether this layer is worth a deeper experiment now."
+          },
+          "key_unknown": {
+            "type": "string",
+            "description": "The single most decision-relevant unknown for this layer. State 'none' only when the layer is not_applicable."
+          },
+          "decision_supported": {
+            "type": "string",
+            "description": "What the next experiment in this layer would let the run decide, and what it would not."
+          }
+        }
+      }
+    },
+    "deep_dives": {
+      "type": "array",
+      "description": "Selected diagnoses. At least one entry is required whenever any layer reports continue=yes.",
+      "items": {
+        "type": "object",
+        "required": [
+          "direction",
+          "hypothesis",
+          "control",
+          "expected_change",
+          "supports_if",
+          "refutes_if",
+          "next_action",
+          "stop"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string",
+            "enum": [
+              "algorithm",
+              "dataflow",
+              "kernel",
+              "config",
+              "compiler",
+              "runtime",
+              "none"
+            ]
+          },
+          "hypothesis": {
+            "type": "string",
+            "description": "One falsifiable statement about the current bottleneck."
+          },
+          "control": {
+            "type": "string",
+            "description": "The variables held fixed, and the comparison that isolates the changed variable."
+          },
+          "expected_change": {
+            "type": "string",
+            "description": "The observable that should move, in which stage, and roughly by how much."
+          },
+          "supports_if": {
+            "type": "string"
+          },
+          "refutes_if": {
+            "type": "string"
+          },
+          "next_action": {
+            "type": "string",
+            "description": "What the run does after a supporting result and after a refuting one."
+          },
+          "stop": {
+            "type": "string",
+            "description": "The budget and the condition that ends this line of investigation."
+          }
+        }
+      }
+    },
+    "change_class": {
+      "type": "object",
+      "description": "Which class of change the current candidate belongs to. Used to keep a kernel rewrite from being reported as a compiler change and a configuration switch from being reported as a source change.",
+      "required": ["kind", "evidence"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["kernel", "config", "compiler", "runtime", "measurement", "none"]
+        },
+        "evidence": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence_chain": {
+      "type": "object",
+      "description": "Optional four-link record: source, compiled artifact, actual execution, performance change. Each link names what it proves and what it does not.",
+      "additionalProperties": true,
+      "properties": {
+        "source": {"type": "string"},
+        "artifact": {"type": "string"},
+        "execution": {"type": "string"},
+        "performance": {"type": "string"},
+        "weakest_link": {"type": "string"}
+      }
+    },
+    "not_pursued": {
+      "type": "array",
+      "description": "Directions deliberately dropped, with the reason. Keeps a later reader from re-running a decision that was already made.",
+      "items": {"type": "string"}
+    }
+  }
+}

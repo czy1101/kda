@@ -50,7 +50,37 @@ EVIDENCE_DIRS = ("docs", "runs", "outputs", "profile")
 ANALYSIS_CAPABILITIES = Path("runs/analysis-capabilities.json")
 ANALYSIS_STRATEGY = Path("runs/analysis-strategy.json")
 TLE_ASSESSMENT = Path("runs/tle-assessment.json")
+BOTTLENECK_SCREEN = Path("runs/bottleneck-screen.json")
 CHECKPOINT_ROOT = Path(".kernelpilot/checkpoints")
+SCREEN_LAYER_IDS = (
+    "algorithm_numerics",
+    "operator_dataflow",
+    "kernel_implementation",
+    "launch_config_autotune",
+    "compiler_codegen",
+    "runtime_system",
+)
+SCREEN_DISPOSITIONS = ("yes", "no", "not_applicable")
+DEEP_DIVE_DIRECTIONS = (
+    "algorithm",
+    "dataflow",
+    "kernel",
+    "config",
+    "compiler",
+    "runtime",
+    "none",
+)
+DEEP_DIVE_FIELDS = (
+    "direction",
+    "hypothesis",
+    "control",
+    "expected_change",
+    "supports_if",
+    "refutes_if",
+    "next_action",
+    "stop",
+)
+CHANGE_CLASSES = ("kernel", "config", "compiler", "runtime", "measurement", "none")
 REQUIRED_TOP_LEVEL = (
     "version",
     "task",
@@ -865,6 +895,7 @@ def validate_task(workspace: Path, task: dict[str, Any]) -> list[str]:
                 "profiling",
                 "reference_profile_comparison",
                 "low_level_artifacts",
+                "bottleneck_screen",
             ):
                 if analysis.get(field, "auto") not in allowed_policies:
                     errors.append(f"analysis.{field} must be auto, disabled, or required")
@@ -1349,6 +1380,103 @@ def evaluate_goal(
     }, errors
 
 
+def load_bottleneck_screen(workspace: Path) -> dict[str, Any] | None:
+    """Read runs/bottleneck-screen.json when the agent wrote one."""
+    path = workspace / BOTTLENECK_SCREEN
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ContractError(f"unreadable bottleneck screen {BOTTLENECK_SCREEN}: {error}") from error
+
+
+def validate_bottleneck_screen(record: Any) -> list[str]:
+    """Check the structure of a two-step bottleneck screen.
+
+    These checks are structural. They can show that all six layers were
+    addressed, that each layer states a disposition, and that a selected
+    deep-dive names a falsifiable experiment. They cannot judge whether the
+    evidence is sufficient, whether the stated control is real, or whether a
+    natural-language attribution is overreaching. Passing this validator is not
+    evidence that a diagnosis is correct.
+    """
+    errors: list[str] = []
+    if not isinstance(record, dict):
+        return ["bottleneck screen must be a JSON object"]
+    if record.get("version") != 1:
+        errors.append("bottleneck screen version must be 1")
+
+    layers = record.get("layers")
+    if not isinstance(layers, list) or not layers:
+        return errors + ["bottleneck screen needs a non-empty layers list"]
+
+    seen: list[str] = []
+    for index, layer in enumerate(layers):
+        if not isinstance(layer, dict):
+            errors.append(f"layers[{index}] must be an object")
+            continue
+        layer_id = layer.get("id")
+        if layer_id not in SCREEN_LAYER_IDS:
+            errors.append(
+                f"layers[{index}].id {layer_id!r} is not one of {', '.join(SCREEN_LAYER_IDS)}"
+            )
+            continue
+        seen.append(layer_id)
+        for field in ("evidence", "key_unknown", "decision_supported"):
+            value = layer.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"layers[{index}].{field} must be a non-empty string")
+        disposition = layer.get("continue")
+        if disposition not in SCREEN_DISPOSITIONS:
+            errors.append(
+                f"layers[{index}].continue must be one of {', '.join(SCREEN_DISPOSITIONS)}"
+            )
+    duplicates = sorted({item for item in seen if seen.count(item) > 1})
+    if duplicates:
+        errors.append(f"duplicate layer ids: {', '.join(duplicates)}")
+    missing = [item for item in SCREEN_LAYER_IDS if item not in seen]
+    if missing:
+        errors.append(f"missing layers: {', '.join(missing)}")
+
+    deep_dives = record.get("deep_dives")
+    if not isinstance(deep_dives, list):
+        errors.append("bottleneck screen needs a deep_dives list")
+        deep_dives = []
+    if any(item.get("continue") == "yes" for item in layers if isinstance(item, dict)):
+        if not deep_dives:
+            errors.append(
+                "at least one layer continues, so deep_dives must name the selected diagnosis"
+            )
+    for index, dive in enumerate(deep_dives):
+        if not isinstance(dive, dict):
+            errors.append(f"deep_dives[{index}] must be an object")
+            continue
+        for field in DEEP_DIVE_FIELDS:
+            value = dive.get(field)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"deep_dives[{index}].{field} must be a non-empty string")
+        if dive.get("direction") not in DEEP_DIVE_DIRECTIONS:
+            errors.append(
+                f"deep_dives[{index}].direction must be one of "
+                f"{', '.join(DEEP_DIVE_DIRECTIONS)}"
+            )
+
+    change_class = record.get("change_class")
+    if change_class is not None:
+        if not isinstance(change_class, dict):
+            errors.append("change_class must be an object")
+        elif change_class.get("kind") not in CHANGE_CLASSES:
+            errors.append(
+                f"change_class.kind must be one of {', '.join(CHANGE_CLASSES)}"
+            )
+        else:
+            evidence = change_class.get("evidence")
+            if not isinstance(evidence, str) or not evidence.strip():
+                errors.append("change_class.evidence must be a non-empty string")
+    return errors
+
+
 def verify_evidence(
     workspace: Path,
     task: dict[str, Any] | None = None,
@@ -1392,6 +1520,29 @@ def verify_evidence(
                     "missing or empty analysis-tool discovery evidence: "
                     f"{ANALYSIS_CAPABILITIES}"
                 )
+
+        # The two-step diagnosis screen is opt-in so existing task workspaces
+        # keep validating: absent file plus the default `auto` policy is not an
+        # error. A present but malformed screen always is, because a malformed
+        # record would otherwise pass as evidence.
+        screen_policy = analysis.get("bottleneck_screen", "auto")
+        if screen_policy != "disabled":
+            try:
+                screen = load_bottleneck_screen(workspace)
+            except ContractError as error:
+                errors.append(str(error))
+            else:
+                if screen is None:
+                    if screen_policy == "required":
+                        errors.append(
+                            "analysis.bottleneck_screen is required but evidence is "
+                            f"missing: {BOTTLENECK_SCREEN}"
+                        )
+                else:
+                    errors.extend(
+                        f"invalid bottleneck screen: {error}"
+                        for error in validate_bottleneck_screen(screen)
+                    )
 
     candidate_records, candidate_errors = _load_candidate_records(workspace)
     candidate_ids = [record.get("id") for record in candidate_records if record.get("id")]
@@ -1489,6 +1640,12 @@ Read the Enflame knowledge index at {KDA_ROOT / 'knowledge/enflame/README.md'}
 and only the cards relevant to this target, language and measured bottleneck.
 Also read the S60 runbook at {KDA_ROOT / 'docs/enflame-s60-runbook.md'} for
 device allocation, staged measurement, A/B, TLE, and knowledge-update rules.
+Every diagnose stage must follow {KDA_ROOT / 'docs/bottleneck-localization.md'}:
+screen the six layers, then select one deep dive instead of collecting every
+artifact. Write the screen and the selected experiment to
+{BOTTLENECK_SCREEN.as_posix()} before you spend a device run on it. When the
+question is about generated code, lowering or a stage artifact, also read
+{KDA_ROOT / 'docs/enflame-compiler-diagnostics.md'}.
 Record applicable card IDs and environment differences in docs/plan.md.
 Historical observations suggest hypotheses, not current compatibility or
 performance guarantees. Revalidate in the contracted environment; knowledge
@@ -1566,6 +1723,8 @@ Run every contracted command through the environment-aware wrapper:
 - inspect the selected route: python3 {driver} strategy --workspace {workspace}
 - profile the selected tool, only when configured and justified: python3 {driver} run profile --workspace {workspace} --variant candidate
 - profile a comparable reference when configured: python3 {driver} run profile --workspace {workspace} --variant reference
+- index a local compiler-artifact directory, offline, no device: python3 {KDA_ROOT / 'scripts/compile_artifacts.py'} index --root <artifact-dir> --out runs/compile-artifacts.json
+- compare two artifact captures by identity: python3 {KDA_ROOT / 'scripts/compile_artifacts.py'} compare --left <dir-or-manifest> --right <dir-or-manifest> --out runs/compile-artifact-diff.json
 - save a correct improved candidate as the recoverable best: python3 {driver} checkpoint save-best --workspace {workspace} --candidate <candidate-id>
 - restore the current best when needed: python3 {driver} checkpoint restore-best --workspace {workspace}
 
